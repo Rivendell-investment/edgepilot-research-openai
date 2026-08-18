@@ -1,0 +1,8 @@
+EdgePilot Research runtime third-party license references
+=========================================================
+
+The runtime lock downloads the packages listed in third-party-inventory.json.
+Their applicable license expressions are recorded there. Complete upstream
+license and notice files are bundled under `texts/`; downloaded wheels also
+retain their own license files. See nautilus-source-offer.md for the modified
+NautilusTrader corresponding source.

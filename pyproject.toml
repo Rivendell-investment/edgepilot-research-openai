@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "edgepilot-research"
+version = "0.1.14"
+description = "Public market strategy research and reproducible backtesting"
+requires-python = ">=3.12,<3.15"
+license = {file = "LICENSE"}
+dependencies = []
+
+[project.scripts]
+edgepilot-research = "edgepilot_research.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/edgepilot_research"]

@@ -1,0 +1,25 @@
+{
+  "spdxVersion":"SPDX-2.3",
+  "dataLicense":"CC0-1.0",
+  "SPDXID":"SPDXRef-DOCUMENT",
+  "name":"edgepilot-research-macos-arm64-cp312",
+  "documentNamespace":"https://edge-pilot.rivendell.capital/sbom/edgepilot-research/0.1.14/macos-arm64-cp312",
+  "creationInfo":{"created":"2026-08-14T00:00:00Z","creators":["Organization: Rivendell Holdings Investment Limited"]},
+  "packages":[
+    {"SPDXID":"SPDXRef-click","name":"click","versionInfo":"8.4.2","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"BSD-3-Clause","licenseDeclared":"BSD-3-Clause","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-fsspec","name":"fsspec","versionInfo":"2026.2.0","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"BSD-3-Clause","licenseDeclared":"BSD-3-Clause","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-msgspec","name":"msgspec","versionInfo":"0.21.1","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"BSD-3-Clause","licenseDeclared":"BSD-3-Clause","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-nautilus","name":"nautilus-trader","versionInfo":"1.228.0","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"LGPL-3.0-or-later","licenseDeclared":"LGPL-3.0-or-later","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-numpy","name":"numpy","versionInfo":"2.5.2","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-pandas","name":"pandas","versionInfo":"2.3.3","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"BSD-3-Clause","licenseDeclared":"BSD-3-Clause","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-portion","name":"portion","versionInfo":"2.6.2","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"LGPL-3.0-or-later","licenseDeclared":"LGPL-3.0-or-later","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-pyarrow","name":"pyarrow","versionInfo":"25.0.1","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"Apache-2.0","licenseDeclared":"Apache-2.0","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-dateutil","name":"python-dateutil","versionInfo":"2.9.0.post0","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-pytz","name":"pytz","versionInfo":"2026.3.post1","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"MIT","licenseDeclared":"MIT","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-six","name":"six","versionInfo":"1.17.0","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"MIT","licenseDeclared":"MIT","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-sortedcontainers","name":"sortedcontainers","versionInfo":"2.4.0","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"Apache-2.0","licenseDeclared":"Apache-2.0","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-tqdm","name":"tqdm","versionInfo":"4.70.0","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-tzdata","name":"tzdata","versionInfo":"2026.3","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"Apache-2.0","licenseDeclared":"Apache-2.0","copyrightText":"NOASSERTION"},
+    {"SPDXID":"SPDXRef-uvloop","name":"uvloop","versionInfo":"0.22.1","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","copyrightText":"NOASSERTION"}
+  ]
+}

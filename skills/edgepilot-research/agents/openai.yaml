@@ -1,0 +1,4 @@
+interface:
+  display_name: "EdgePilot Research"
+  short_description: "Discover and backtest public strategies"
+  default_prompt: "Use $edgepilot-research to guide me in my language from strategy discovery into the existing V2 strategy-matching flow. Keep helping until I choose a strategy or a real capability boundary prevents the handoff; do not check or install the runtime unless I ask to backtest or open the Dashboard."

@@ -1,0 +1,10 @@
+{
+  "name": "edgepilot-research",
+  "version": "0.1.14",
+  "description": "Publicly installable proprietary software for market strategy research and reproducible backtesting without accounts or trading.",
+  "author": {
+    "name": "Rivendell Holdings Investment Limited",
+    "email": "agent_strategy@rivendell.capital"
+  },
+  "homepage": "https://www.rivendell.capital"
+}
