@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -27,6 +28,21 @@ RUNTIME_FIELDS = {"id", "os", "arch", "python_version", "python_tag", "total_byt
 WHEEL_FIELDS = {"distribution", "version", "filename", "url", "bytes", "sha256", "etag"}
 NAUTILUS_ORIGIN = ("https", "edge-pilot.rivendell.capital", None)
 PYPI_ORIGIN = ("https", "files.pythonhosted.org", None)
+# Cloudflare Bot Fight Mode returns 403 "error code: 1010" for Python-urllib/3.x
+# on every OS. Custom EdgePilot UAs also work; keep a browser-like UA as insurance.
+DOWNLOAD_USER_AGENT = (
+    "Mozilla/5.0 (compatible; EdgePilot-Research-Installer/1; +https://edge-pilot.rivendell.capital)"
+)
+INTEL_MAC_UNSUPPORTED = (
+    "This Mac uses an Intel processor, which EdgePilot Research does not support. "
+    "Supported Mac computers use Apple Silicon (M-series, arm64). "
+    "No runtime files were downloaded or changed."
+)
+ROSETTA_UNSUPPORTED = (
+    "This is an Apple Silicon Mac, but the installer is running through Rosetta as x86_64. "
+    "Use a native arm64 Terminal and Python, then try again. "
+    "No runtime files were downloaded or changed."
+)
 
 
 @dataclass(frozen=True)
@@ -141,9 +157,26 @@ def _parse_wheel(value: Any) -> Wheel:
     return Wheel(distribution, version, filename, url, size, digest, etag)
 
 
+def macos_process_is_translated() -> bool:
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/sysctl", "-in", "sysctl.proc_translated"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "1"
+
+
 def current_platform() -> tuple[str, str]:
     os_name = {"darwin": "macos", "windows": "windows", "linux": "linux"}.get(platform.system().lower())
     machine = platform.machine().lower()
+    if os_name == "macos" and machine in {"x86_64", "amd64"}:
+        if macos_process_is_translated():
+            raise ValueError(ROSETTA_UNSUPPORTED)
+        raise ValueError(INTEL_MAC_UNSUPPORTED)
     arch = {"aarch64": "arm64", "arm64": "arm64", "amd64": "amd64", "x86_64": "x86_64"}.get(machine)
     if os_name == "windows" and arch == "x86_64":
         arch = "amd64"
@@ -534,7 +567,7 @@ def _download(wheel: Wheel, destination: Path, *, progress: Callable[[int, int],
             if offset >= wheel.bytes:
                 destination.unlink(missing_ok=True)
                 offset = 0
-            headers = {"User-Agent": "edgepilot-research-runtime/1"}
+            headers = {"User-Agent": DOWNLOAD_USER_AGENT}
             if offset:
                 headers.update({"Range": f"bytes={offset}-", "If-Range": wheel.etag})
             request = urllib.request.Request(wheel.url, headers=headers)
@@ -576,6 +609,15 @@ def _download(wheel: Wheel, destination: Path, *, progress: Callable[[int, int],
                 if count != wheel.bytes:
                     raise OSError(f"runtime response ended at {count} of {wheel.bytes} bytes")
             return
+        except urllib.error.HTTPError as error:
+            destination.unlink(missing_ok=True)
+            if error.code == 403:
+                raise ValueError(
+                    "runtime download failed: HTTP 403 (Cloudflare error code 1010). "
+                    "Retry the locked URL with curl -A 'Mozilla/5.0' (Windows: curl.exe); "
+                    "do not install nautilus_trader from PyPI"
+                ) from error
+            last_error = error
         except OSError as error:
             # Preserve a bounded partial only for a retryable transport failure.
             if destination.is_file() and destination.stat().st_size >= wheel.bytes:

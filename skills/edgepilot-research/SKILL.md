@@ -74,7 +74,24 @@ If reviewed wheel files are already available locally, pass their directory with
 python3 skills/edgepilot-research/scripts/install_runtime.py --wheelhouse /path/to/wheels
 ```
 
-The installer displays the exact platform, native-code notice, per-platform total, actual download bytes, download origins, cache hits, state directory, and live stages for cache/download processing, venv creation, locked installation, verification, and activation. Continue only after the user explicitly agrees. Host permission prompts remain separate and must not be bypassed. It follows the bundled lock exactly: the customized NautilusTrader wheel comes from EdgePilot, while locked public dependency wheels come directly from `files.pythonhosted.org`. Never add custom indexes, URLs, hashes, mirrors, dependencies, or a dynamic PyPI resolver. Unsupported platforms fail before download; do not install system Python automatically.
+The installer displays the exact platform, native-code notice, per-platform total, actual download bytes, download origins, cache hits, state directory, and live stages for cache/download processing, venv creation, locked installation, verification, and activation. Continue only after the user explicitly agrees. Host permission prompts remain separate and must not be bypassed. It follows the bundled lock exactly: the customized NautilusTrader wheel comes from EdgePilot, while locked public dependency wheels come directly from `files.pythonhosted.org`. Never add custom indexes, URLs, hashes, mirrors, dependencies, or a dynamic PyPI resolver. Never `pip install nautilus_trader` / `nautilus-trader` from PyPI, GitHub, or any other public index, on macOS, Windows, or Linux. The published runtime supports Apple Silicon Macs (`arm64`) and 64-bit Windows (`amd64`); Intel Macs and Linux are unsupported. Unsupported platforms fail before download; do not install system Python automatically.
+
+When a true Intel Mac is detected, explain in the user's current language that this Mac uses an Intel processor, EdgePilot Research does not support Intel Macs, supported Macs use Apple Silicon (M-series), and no runtime files were downloaded or changed. If an Apple Silicon Mac is running an x86_64 process through Rosetta, explain that the machine is supported but the user must retry from a native arm64 Terminal and Python. Do not describe a Rosetta process as Intel hardware.
+
+EdgePilot HTTPS (runtime wheels and the public catalog) is behind Cloudflare Bot Fight Mode on every OS. Default Python `urllib` (`Python-urllib/3.x`) returns HTTP 403 with body `error code: 1010`. That is a blocked User-Agent, not a missing file. Do not replace the locked EdgePilot Nautilus URL with a PyPI wheel. Retry the **same** locked URL with an explicit browser-like User-Agent:
+
+```bash
+# macOS / Linux — save using the exact filename from runtime-lock.json
+curl -L --fail -A "Mozilla/5.0" -o "$LOCKED_FILENAME" "$LOCKED_NAUTILUS_URL"
+python3 skills/edgepilot-research/scripts/install_runtime.py --wheelhouse "$PWD"
+```
+
+```bat
+curl.exe -L --fail -A "Mozilla/5.0" -o "%LOCKED_FILENAME%" "%LOCKED_NAUTILUS_URL%"
+py -3 skills\edgepilot-research\scripts\install_runtime.py --wheelhouse %CD%
+```
+
+Catalog GETs that bypass the CLI must use the same `-A "Mozilla/5.0"` (or `curl.exe` on Windows). Do not download EdgePilot URLs with Python `urllib` unless that User-Agent is set.
 
 After installation, use only the stable launcher under the Research state directory for backtests and the Dashboard. On Windows use `%APPDATA%\EdgePilotResearch\bin\edgepilot-research.cmd`. Do not run `edgepilot_research.cli` directly with the bootstrap/system Python. If the user requested only a CLI backtest, do not start the Dashboard.
 
@@ -98,7 +115,7 @@ edgepilot-research marketplace inspect STRATEGY_SLUG --version 1.0.0
 edgepilot-research marketplace install STRATEGY_SLUG --version 1.0.0
 ```
 
-Access the public Research catalog over HTTPS whenever current catalog data is needed. Prefer the CLI, but treat network failures as channel-specific: if terminal DNS is restricted, retry the same command with the environment's network permission or outside the sandbox; if the in-app browser returns `ERR_BLOCKED_BY_CLIENT`, use another available network-capable web/search tool or the permitted command-line request. For example, fetch `https://edge-pilot.rivendell.capital/api/research/strategies` directly when the strategy list is required. Do not ask the user to copy a public JSON response unless every available network-capable tool has failed. Do not use this fallback for authenticated endpoints, arbitrary third-party URLs, exchange adapters, or order execution.
+Access the public Research catalog over HTTPS whenever current catalog data is needed. Prefer the CLI, but treat network failures as channel-specific: if terminal DNS is restricted, retry the same command with the environment's network permission or outside the sandbox; if the in-app browser returns `ERR_BLOCKED_BY_CLIENT`, use another available network-capable web/search tool or the permitted command-line request. For example, `curl -A "Mozilla/5.0"` (Windows: `curl.exe`) `https://edge-pilot.rivendell.capital/api/research/strategies` when the strategy list is required. Default Python `urllib` is rejected with 403/`1010`; do not treat that as a missing catalog or switch to PyPI. Do not ask the user to copy a public JSON response unless every available network-capable tool has failed. Do not use this fallback for authenticated endpoints, arbitrary third-party URLs, exchange adapters, or order execution.
 
 When the user asks to open or use the Research Dashboard, outbound network permission is a startup requirement, not a retry optimization. First verify the anonymous catalog using the environment's network permission, then start the generated launcher as a long-running process with that same permission:
 

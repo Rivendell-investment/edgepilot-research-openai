@@ -3,7 +3,7 @@
   "dataLicense":"CC0-1.0",
   "SPDXID":"SPDXRef-DOCUMENT",
   "name":"edgepilot-research-macos-arm64-cp312",
-  "documentNamespace":"https://edge-pilot.rivendell.capital/sbom/edgepilot-research/0.1.14/macos-arm64-cp312",
+  "documentNamespace":"https://edge-pilot.rivendell.capital/sbom/edgepilot-research/runtime/macos-arm64-cp312/77cef3ec-57d0-4306-a6a1-c5eea16f2a88",
   "creationInfo":{"created":"2026-08-14T00:00:00Z","creators":["Organization: Rivendell Holdings Investment Limited"]},
   "packages":[
     {"SPDXID":"SPDXRef-click","name":"click","versionInfo":"8.4.2","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"BSD-3-Clause","licenseDeclared":"BSD-3-Clause","copyrightText":"NOASSERTION"},
