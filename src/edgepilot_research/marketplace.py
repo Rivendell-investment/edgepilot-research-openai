@@ -13,11 +13,13 @@ import urllib.parse
 import urllib.error
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import __version__
 from .paths import state_root
+from .process import pid_exists as _pid_is_alive
 ORIGIN = os.environ.get("EDGEPILOT_RESEARCH_ORIGIN", "https://edge-pilot.rivendell.capital").rstrip("/")
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]{0,63}$")
@@ -33,6 +35,8 @@ RECOMMENDATION_ERRORS: dict[int, set[str]] = {
     500: {"INTERNAL_ERROR"},
     503: {"SERVICE_UNAVAILABLE", "INTERNAL_ERROR"},
 }
+MAX_DOWNLOAD_ERROR_BYTES = 16 * 1024
+MAX_DOWNLOAD_RETRY_AFTER = 2_678_400
 
 
 class InstallConflictError(ValueError):
@@ -52,6 +56,28 @@ class ResearchRecommendationError(Exception):
         self.status = status
         self.retryable = retryable
         self.retry_after = retry_after
+
+
+class ResearchDownloadError(Exception):
+    """A safe, structured failure returned while downloading a Research package."""
+
+    def __init__(self, code: str, status: int, retryable: bool, *, retry_after: int | None = None,
+                 request_id: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status = status
+        self.retryable = retryable
+        self.retry_after = retry_after
+        self.request_id = request_id
+
+
+class ResearchDownloadQuotaError(ResearchDownloadError):
+    """The anonymous source network has exhausted a Research download quota."""
+
+    def __init__(self, *, retry_after: int, quotas: dict[str, Any], request_id: str | None = None) -> None:
+        super().__init__("DOWNLOAD_QUOTA_EXCEEDED", 429, True, retry_after=retry_after, request_id=request_id)
+        self.limiting_scopes = ["network"]
+        self.quotas = quotas
 
 
 def _json(path: str, query: dict[str, str] | None = None) -> dict[str, Any]:
@@ -120,6 +146,73 @@ def _retry_after(raw: str) -> int | None:
     return int(raw) if raw.isdigit() and 0 < int(raw) <= 3600 else None
 
 
+def _download_retry_after(raw: str) -> int | None:
+    return int(raw) if raw.isdigit() and 0 < int(raw) <= MAX_DOWNLOAD_RETRY_AFTER else None
+
+
+def _request_id(detail: dict[str, Any]) -> str | None:
+    value = detail.get("request_id")
+    return value if isinstance(value, str) and 0 < len(value) <= 128 else None
+
+
+def _quota_period(value: Any, expected_limit: int) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or set(value) != {"limit", "used", "resets_at"}:
+        return None
+    limit, used, resets_at = value["limit"], value["used"], value["resets_at"]
+    if type(limit) is not int or limit != expected_limit or type(used) is not int or not 0 <= used <= limit:
+        return None
+    if not isinstance(resets_at, str) or not resets_at.endswith("Z"):
+        return None
+    try:
+        reset = datetime.fromisoformat(resets_at.removesuffix("Z") + "+00:00")
+    except ValueError:
+        return None
+    if reset.tzinfo != timezone.utc:
+        return None
+    return {"limit": limit, "used": used, "resets_at": resets_at}
+
+
+def _download_error(error: urllib.error.HTTPError) -> ResearchDownloadError:
+    try:
+        raw = error.read(MAX_DOWNLOAD_ERROR_BYTES + 1)
+    finally:
+        error.close()
+    if len(raw) > MAX_DOWNLOAD_ERROR_BYTES:
+        return ResearchDownloadError("REMOTE_HTTP_ERROR", 502, True)
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        value = None
+    detail = value.get("error") if isinstance(value, dict) else None
+    if not isinstance(detail, dict):
+        return ResearchDownloadError("REMOTE_HTTP_ERROR", 502, True)
+    request_id = _request_id(detail)
+    if error.code == 429 and detail.get("code") == "DOWNLOAD_QUOTA_EXCEEDED" and detail.get("retryable") is True:
+        retry_after = _download_retry_after(error.headers.get("Retry-After", "") if error.headers else "")
+        scopes, quotas = detail.get("limiting_scopes"), detail.get("quotas")
+        network = quotas.get("network") if isinstance(quotas, dict) and set(quotas) == {"network"} else None
+        daily = _quota_period(network.get("daily"), 20) if isinstance(network, dict) and set(network) == {"daily", "monthly"} else None
+        monthly = _quota_period(network.get("monthly"), 100) if isinstance(network, dict) and set(network) == {"daily", "monthly"} else None
+        exhausted = daily is not None and monthly is not None and (
+            daily["used"] >= daily["limit"] or monthly["used"] >= monthly["limit"]
+        )
+        if scopes == ["network"] and retry_after is not None and exhausted:
+            return ResearchDownloadQuotaError(
+                retry_after=retry_after,
+                quotas={"network": {"daily": daily, "monthly": monthly}},
+                request_id=request_id,
+            )
+    if error.code == 503 and detail.get("code") == "DOWNLOAD_QUOTA_UNAVAILABLE" and detail.get("retryable") is True:
+        return ResearchDownloadError("DOWNLOAD_QUOTA_UNAVAILABLE", 503, True, request_id=request_id)
+    if error.code == 429 and detail.get("code") == "RATE_LIMITED" and detail.get("retryable") is True:
+        retry_after = _retry_after(error.headers.get("Retry-After", "") if error.headers else "")
+        if retry_after is not None:
+            return ResearchDownloadError(
+                "RATE_LIMITED", 429, True, retry_after=retry_after, request_id=request_id,
+            )
+    return ResearchDownloadError("REMOTE_HTTP_ERROR", 502, True)
+
+
 def inspect(slug: str, version: str, *, locale: str = "en") -> dict[str, Any]:
     _validate(slug, version)
     return _json(f"/api/research/strategies/{slug}/{version}", {"locale": locale})
@@ -140,14 +233,17 @@ def install(slug: str, version: str) -> Path:
     if type(expected_bytes) is not int or expected_bytes < 1 or expected_bytes > 20 * 1024 * 1024:
         raise ValueError("Research package size is invalid")
     url = f"{ORIGIN}/api/research/strategies/{slug}/{version}/download"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=_headers()), timeout=60) as response:
-        length = response.headers.get("Content-Length")
-        digest_header = response.headers.get("X-Package-SHA256")
-        if length is not None and (not length.isdigit() or int(length) != expected_bytes):
-            raise DigestMismatchError("Research package Content-Length differs from its published metadata")
-        if digest_header is not None and digest_header != expected:
-            raise DigestMismatchError("Research package digest header differs from its published metadata")
-        archive = response.read(20 * 1024 * 1024 + 1)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=_headers()), timeout=60) as response:
+            length = response.headers.get("Content-Length")
+            digest_header = response.headers.get("X-Package-SHA256")
+            if length is not None and (not length.isdigit() or int(length) != expected_bytes):
+                raise DigestMismatchError("Research package Content-Length differs from its published metadata")
+            if digest_header is not None and digest_header != expected:
+                raise DigestMismatchError("Research package digest header differs from its published metadata")
+            archive = response.read(20 * 1024 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        raise _download_error(error) from error
     if len(archive) != expected_bytes or hashlib.sha256(archive).hexdigest() != expected:
         raise DigestMismatchError("Research package digest or size is invalid")
     target = state_root() / "strategies" / slug.replace("-", "_")
@@ -247,13 +343,3 @@ def _acquire_install_lock(target: Path, install_lock: Path) -> None:
         install_lock.mkdir()
     except FileExistsError as error:
         raise InstallConflictError(f"another install is already changing {target.name.replace('_', '-')}") from error
-
-
-def _pid_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (PermissionError, OSError):
-        return True
-    return True

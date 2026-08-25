@@ -1,7 +1,7 @@
 # Third-party notices
 
 The lightweight plugin archive contains EdgePilot Research source and the shared
-`edgepilot_backtest_core` source; it contains no third-party wheels. The installer
+`edgepilot_core` source; it contains no third-party wheels. The installer
 uses the Python standard library, but the installed native runtime is a separate
 artifact and includes NautilusTrader and every dependency named in the immutable
 `runtime-lock.json`. The customized NautilusTrader wheel is downloaded from

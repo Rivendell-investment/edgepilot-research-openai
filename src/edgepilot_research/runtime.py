@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from .paths import runtime_state_path, state_root
+from .process import pid_exists as _pid_exists
 
 SCHEMA = "edgepilot-research-runtime-v1"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -25,11 +26,10 @@ DIST = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]*$")
 LOCK_FIELDS = {"schema_version", "nautilus_version", "runtimes"}
 RUNTIME_FIELDS = {"id", "os", "arch", "python_version", "python_tag", "total_bytes", "wheelhouse_sha256", "wheels"}
-WHEEL_FIELDS = {"distribution", "version", "filename", "url", "bytes", "sha256", "etag"}
-NAUTILUS_ORIGIN = ("https", "edge-pilot.rivendell.capital", None)
+WHEEL_FIELDS = {"distribution", "version", "filename", "url", "bytes", "sha256"}
+WHEEL_OPTIONAL_FIELDS = {"etag"}
+NAUTILUS_ORIGIN = ("https", "pub-159c6bd6a09646de8b4b871989755240.r2.dev", None)
 PYPI_ORIGIN = ("https", "files.pythonhosted.org", None)
-# Cloudflare Bot Fight Mode returns 403 "error code: 1010" for Python-urllib/3.x
-# on every OS. Custom EdgePilot UAs also work; keep a browser-like UA as insurance.
 DOWNLOAD_USER_AGENT = (
     "Mozilla/5.0 (compatible; EdgePilot-Research-Installer/1; +https://edge-pilot.rivendell.capital)"
 )
@@ -53,7 +53,7 @@ class Wheel:
     url: str
     bytes: int
     sha256: str
-    etag: str
+    etag: str | None = None
 
 
 @dataclass(frozen=True)
@@ -139,7 +139,7 @@ def _parse_runtime(value: Any) -> RuntimeEntry:
 
 
 def _parse_wheel(value: Any) -> Wheel:
-    if not isinstance(value, dict) or set(value) != WHEEL_FIELDS:
+    if not isinstance(value, dict) or not WHEEL_FIELDS.issubset(value) or set(value) - WHEEL_FIELDS - WHEEL_OPTIONAL_FIELDS:
         raise ValueError("wheel entry has unknown or missing fields")
     raw_distribution = str(value["distribution"])
     distribution = re.sub(r"[-_.]+", "-", raw_distribution).lower()
@@ -151,8 +151,8 @@ def _parse_wheel(value: Any) -> Wheel:
         raise ValueError("wheel filename or URL path is invalid")
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("wheel URL must be credential-free HTTPS without query or fragment")
-    size, digest, etag = value["bytes"], str(value["sha256"]), str(value["etag"])
-    if type(size) is not int or size <= 0 or not SHA256.fullmatch(digest) or not etag or any(ch in etag for ch in "\r\n"):
+    size, digest, etag = value["bytes"], str(value["sha256"]), value.get("etag")
+    if type(size) is not int or size <= 0 or not SHA256.fullmatch(digest) or (etag is not None and (not isinstance(etag, str) or not etag or any(ch in etag for ch in "\r\n"))):
         raise ValueError("wheel size, digest, or ETag is invalid")
     return Wheel(distribution, version, filename, url, size, digest, etag)
 
@@ -233,9 +233,41 @@ def require_active_runtime(home: Path | None = None) -> dict[str, Any]:
         raise ValueError("RUNTIME_PROCESS_STALE: restart through the active Research runtime launcher")
     package = Path(__file__).resolve()
     app = (release / "app").resolve()
-    if app not in package.parents:
+    # Also accept code loaded from the plugin's src layout (plugin/src/edgepilot_research/...)
+    # so that subprocesses launched with PYTHONPATH pointing to the live plugin source work.
+    in_src_layout = package.parent.parent.name == "src"
+    if app not in package.parents and not in_src_layout:
         raise ValueError("RUNTIME_PROCESS_STALE: the process loaded Research code outside the active release")
     return {**status, "python_executable": str(Path(sys.executable).absolute()), "process_current": True}
+
+
+def active_runtime_python(home: Path | None = None) -> Path:
+    """Return the verified active runtime interpreter without requiring this process to run inside it."""
+    root = (home or state_root()).resolve()
+    status = runtime_status(root)
+    if not status.get("installed"):
+        raise ValueError("RUNTIME_NOT_INSTALLED: install the Research runtime before continuing")
+    release = (root / str(status["active_release"])).resolve()
+    if release.parent != (root / "releases").resolve():
+        raise ValueError("RUNTIME_INCOMPLETE: active runtime release is unavailable")
+    # A POSIX venv Python is normally a symlink to the base interpreter. Keep the
+    # venv entry path so Python activates that venv when the Dashboard starts it.
+    python = _venv_python(release / ".venv")
+    if not python.is_file():
+        raise ValueError("RUNTIME_INCOMPLETE: active runtime Python is unavailable")
+    lock = load_lock(release / "app" / "runtime-lock.json")
+    entry = next((row for row in lock.runtimes if row.id == status.get("runtime_id")), None)
+    if lock.sha256 != status.get("runtime_lock_sha256") or entry is None or entry.wheelhouse_sha256 != status.get("wheelhouse_sha256"):
+        raise ValueError("RUNTIME_VERSION_MISMATCH: installed lock differs from runtime state")
+    return python
+
+
+def runtime_install_info(plugin_root: Path, lock_path: Path, home: Path | None = None) -> dict[str, Any]:
+    """Describe the locked download before the Dashboard asks for confirmation."""
+    entry = select_runtime(load_lock(lock_path.resolve()))
+    root = (home or state_root()).resolve()
+    return {"product_name": "EdgePilot Research", "download_size": entry.total_bytes,
+            "runtime_id": entry.id, "version": entry.python_version, "install_path": str(root / "releases")}
 
 
 def format_bytes(value: int) -> str:
@@ -243,7 +275,7 @@ def format_bytes(value: int) -> str:
 
 
 def _progress(stage: str, message: str) -> None:
-    print(f"[{stage}] {message}", flush=True)
+    print(f"[{stage}] {message}", file=sys.stderr, flush=True)
 
 
 def _read_state(path: Path, home: Path) -> dict[str, Any]:
@@ -275,10 +307,16 @@ def install_runtime(
     home: Path | None = None,
     wheelhouse: Path | None = None,
     input_fn: Callable[[str], str] = input,
+    progress_callback: Callable[[str, str, int | None, int | None], None] | None = None,
 ) -> dict[str, Any]:
     plugin_root = plugin_root.resolve()
     root = (home or state_root()).resolve()
-    _progress("1/7", "Checking the runtime lock, platform, and CPython")
+    def emit(stage: str, message: str, downloaded: int | None = None, total: int | None = None) -> None:
+        _progress(stage, message)
+        if progress_callback is not None:
+            progress_callback(stage, message, downloaded, total)
+
+    emit("preparing", "Checking the runtime lock, platform, and CPython")
     lock = load_lock(lock_path.resolve())
     try:
         entry = select_runtime(lock)
@@ -306,19 +344,22 @@ def install_runtime(
         if existing_release:
             _verify_release(final, entry)
         plan = [(wheel, "installed") for wheel in entry.wheels] if existing_release else _install_plan(root, entry, wheelhouse)
+        downloaded = 0
+        download_total = 0
         notice = _format_install_plan(root, entry, plan)
-        print(notice)
+        print(notice, file=sys.stderr)
         if not existing_release and not accept_download and input_fn("Type 'yes' to continue: ").strip().lower() != "yes":
             raise ValueError("runtime download was not accepted")
         if existing_release:
-            _progress("2/7", "Verified the existing immutable runtime release")
+            emit("verifying", "Verified the existing immutable runtime release")
         else:
-            _progress("2/7", "Preparing the isolated runtime release")
+            emit("preparing", "Preparing the isolated runtime release")
             staging.mkdir()
             _copy_app(plugin_root, staging / "app")
             cache = root / "cache" / "wheels" / entry.id
             cache.mkdir(parents=True, exist_ok=True)
-            processed = 0
+            download_total = sum(wheel.bytes for wheel, source_kind in plan if source_kind == "download")
+            emit("preparing", "Calculated the remaining runtime download", 0, download_total)
             total = len(plan)
             for index, (wheel, source_kind) in enumerate(plan, 1):
                 action = {
@@ -326,26 +367,31 @@ def install_runtime(
                     "cache": "Reading and verifying local cache",
                     "local": "Reading and verifying local wheelhouse",
                 }[source_kind]
-                _progress("3/7", f"{action} {index}/{total}: {wheel.filename} ({format_bytes(wheel.bytes)})")
+                stage = "downloading" if source_kind == "download" else "verifying"
+                emit(stage, f"{action} {index}/{total}: {wheel.filename} ({format_bytes(wheel.bytes)})", downloaded, download_total)
                 source = wheelhouse / wheel.filename if source_kind == "local" and wheelhouse else None
                 _obtain_wheel(
                     wheel,
                     cache / wheel.filename,
                     source,
-                    progress=lambda current, _size, base=processed: _progress(
-                        "3/7", f"Processed {format_bytes(base + current)} / {format_bytes(entry.total_bytes)}"
+                    progress=lambda current, _size, base=downloaded, network=source_kind == "download": emit(
+                        "downloading" if network else "verifying",
+                        (f"Downloaded {format_bytes(base + current)} / {format_bytes(download_total)}" if network
+                         else f"Verified {wheel.filename}"),
+                        base + current if network else base, download_total,
                     ),
                 )
-                processed += wheel.bytes
-            _progress("4/7", f"Creating isolated CPython {entry.python_version} environment")
-            subprocess.run([str(python), "-m", "venv", str(staging / ".venv")], check=True)
+                if source_kind == "download":
+                    downloaded += wheel.bytes
+            emit("installing", f"Creating isolated CPython {entry.python_version} environment", downloaded, download_total)
+            subprocess.run([str(python), "-m", "venv", str(staging / ".venv")], check=True, stdout=sys.stderr, stderr=sys.stderr)
             runtime_python = _venv_python(staging / ".venv")
             requirements = [f"{wheel.distribution}=={wheel.version}" for wheel in entry.wheels]
             environment = {**os.environ, "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
-            _progress("5/7", f"Installing {len(requirements)} locked wheels without dependency resolution")
-            subprocess.run([str(runtime_python), "-m", "pip", "--isolated", "install", "--no-index", "--no-deps", "--find-links", str(cache), *requirements], check=True, env=environment)
-            _progress("6/7", "Checking locked versions and importing the Research core")
-            subprocess.run([str(runtime_python), "-m", "pip", "check"], check=True, env=environment)
+            emit("installing", f"Installing {len(requirements)} locked wheels without dependency resolution", downloaded, download_total)
+            subprocess.run([str(runtime_python), "-m", "pip", "--isolated", "install", "--no-index", "--no-deps", "--find-links", str(cache), *requirements], check=True, env=environment, stdout=sys.stderr, stderr=sys.stderr)
+            emit("verifying", "Checking locked versions and importing the Research core", downloaded, download_total)
+            subprocess.run([str(runtime_python), "-m", "pip", "check"], check=True, env=environment, stdout=sys.stderr, stderr=sys.stderr)
             _write_pth(runtime_python, staging / "app")
             _verify_release(staging, entry)
             staging.rename(final)
@@ -371,7 +417,7 @@ def install_runtime(
         }
         _atomic_json(root / "runtime.json", state)
         _write_launcher(root)
-        _progress("7/7", f"Activated {entry.id}; launcher: {root / 'bin' / ('edgepilot-research.cmd' if os.name == 'nt' else 'edgepilot-research')}")
+        emit("ready", f"Activated {entry.id}; launcher: {root / 'bin' / ('edgepilot-research.cmd' if os.name == 'nt' else 'edgepilot-research')}", downloaded, download_total)
         return state
     finally:
         if staging.exists():
@@ -569,17 +615,18 @@ def _download(wheel: Wheel, destination: Path, *, progress: Callable[[int, int],
                 offset = 0
             headers = {"User-Agent": DOWNLOAD_USER_AGENT}
             if offset:
-                headers.update({"Range": f"bytes={offset}-", "If-Range": wheel.etag})
+                headers["Range"] = f"bytes={offset}-"
+                if wheel.etag:
+                    headers["If-Range"] = wheel.etag
             request = urllib.request.Request(wheel.url, headers=headers)
             with opener.open(request, timeout=15) as response:
                 _set_read_timeout(response, 300)
                 status = getattr(response, "status", response.getcode())
-                etag = response.headers.get("ETag")
                 mode = "wb"
                 expected_bytes = wheel.bytes
                 if offset and status == 206:
                     content_range = response.headers.get("Content-Range")
-                    if etag != wheel.etag or content_range != f"bytes {offset}-{wheel.bytes - 1}/{wheel.bytes}":
+                    if content_range != f"bytes {offset}-{wheel.bytes - 1}/{wheel.bytes}" or (wheel.etag and response.headers.get("ETag") != wheel.etag):
                         destination.unlink(missing_ok=True)
                         continue
                     mode = "ab"
@@ -660,7 +707,7 @@ def _plugin_digest(root: Path) -> str:
         if not path.is_file():
             raise ValueError(f"plugin is missing {relative}")
         digest.update(relative.encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
-    for tree in ("src", "backtest_core_src", "bundled", "skills", "assets", "licenses"):
+    for tree in ("src", "core_src", "bundled", "skills", "assets", "licenses"):
         base = root / tree
         if not base.exists():
             continue
@@ -674,7 +721,7 @@ def _plugin_digest(root: Path) -> str:
 
 def _copy_app(root: Path, destination: Path) -> None:
     destination.mkdir()
-    sources = [(root / "src" / "edgepilot_research", destination / "edgepilot_research"), (root / "backtest_core_src" / "edgepilot_backtest_core", destination / "edgepilot_backtest_core")]
+    sources = [(root / "src" / "edgepilot_research", destination / "edgepilot_research"), (root / "core_src" / "edgepilot_core", destination / "edgepilot_core")]
     for source, target in sources:
         if not source.is_dir():
             raise ValueError(f"plugin is missing {source.relative_to(root)}")
@@ -702,9 +749,9 @@ def _verify_release(release: Path, entry: RuntimeEntry) -> None:
     if not python.is_file():
         raise ValueError("runtime release is missing its Python interpreter")
     expected = json.dumps({wheel.distribution: wheel.version for wheel in entry.wheels}, sort_keys=True)
-    code = "import importlib.metadata as m,json; expected=json.loads(" + repr(expected) + "); actual={k:m.version(k) for k in expected}; assert actual==expected,(actual,expected); import edgepilot_research,edgepilot_backtest_core,nautilus_trader"
+    code = "import importlib.metadata as m,json; expected=json.loads(" + repr(expected) + "); actual={k:m.version(k) for k in expected}; assert actual==expected,(actual,expected); import edgepilot_research,edgepilot_core,nautilus_trader"
     try:
-        subprocess.run([str(python), "-c", code], check=True, env={**os.environ, "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"})
+        subprocess.run([str(python), "-c", code], check=True, env={**os.environ, "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}, stdout=sys.stderr, stderr=sys.stderr)
     except subprocess.CalledProcessError as error:
         raise ValueError("runtime release failed locked-version or import verification") from error
 
@@ -775,15 +822,3 @@ def _atomic_text(path: Path, value: str) -> None:
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
-
-
-def _pid_exists(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True

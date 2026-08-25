@@ -24,9 +24,10 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
-from .marketplace import DigestMismatchError, IDENTIFIER, InstallConflictError, RECOMMENDATION_FIELDS, ResearchRecommendationError, VERSION, inspect, install, recommend, search, versions
+from .marketplace import DigestMismatchError, IDENTIFIER, InstallConflictError, RECOMMENDATION_FIELDS, ResearchDownloadError, ResearchDownloadQuotaError, ResearchRecommendationError, VERSION, inspect, install, recommend, search, versions
 from .paths import state_root
-from .runtime import require_active_runtime, runtime_status
+from .process import pid_exists as _pid_exists
+from .runtime import active_runtime_python, install_runtime, runtime_install_info, runtime_status
 
 ASSETS = Path(__file__).with_name("ui_assets") / "app"
 LOCALES = ("en", "ko", "zh-CN", "zh-TW")
@@ -47,18 +48,6 @@ DASHBOARD_FIELDS = {"schema_version", "pid", "instance_nonce", "host", "port", "
 
 class ConflictError(ValueError):
     """A safe local mutation conflicts with current state."""
-
-
-def _pid_exists(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -432,8 +421,11 @@ def _safe_runtime() -> dict[str, Any]:
         result["python_executable"] = str(Path(sys.executable).absolute())
         result["process_current"] = Path(sys.prefix).resolve() == (root / str(status["active_release"]) / ".venv").resolve()
     else:
-        result["install_command"] = "py -3 skills\\edgepilot-research\\scripts\\install_runtime.py" if os.name == "nt" else "python3 skills/edgepilot-research/scripts/install_runtime.py"
-        result["assistant_prompt"] = "Install the EdgePilot Research runtime and verify it, then reopen this Dashboard."
+        product_root = Path(__file__).resolve().parents[2]
+        try:
+            result.update(runtime_install_info(product_root, product_root / "runtime-lock.json"))
+        except ValueError as error:
+            result["unavailable_reason"] = str(error)
     return result
 
 
@@ -500,9 +492,16 @@ def _backtest_result(output: str, *, strategy: str, version: str, preset: str, d
 
 def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -> dict[str, Any]:
     """Run Nautilus in a disposable process so its global logger cannot kill the Dashboard."""
+    product_root = Path(__file__).resolve().parents[2]
+    source = product_root / "src"
+    core = product_root / "core_src"
+    if not core.is_dir():
+        core = product_root.parent / "edgepilot-core" / "src"
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["PYTHONPATH"] = os.pathsep.join([str(source), str(core)])
     completed = subprocess.run(
         [
-            sys.executable,
+            str(active_runtime_python()),
             "-m",
             "edgepilot_research.cli",
             "backtest",
@@ -515,6 +514,7 @@ def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -
             str(days),
         ],
         cwd=state_root(),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -534,8 +534,8 @@ def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -
 
 
 def start_backtest(payload: dict[str, Any]) -> str:
-    if set(payload) != {"strategy", "version", "preset", "days"}:
-        raise ValueError("backtest accepts only strategy, version, preset, and days")
+    if set(payload) not in ({"strategy", "version", "preset", "days"}, {"strategy", "version", "preset", "days", "confirm_runtime"}):
+        raise ValueError("backtest accepts only strategy, version, preset, days, and optional confirm_runtime")
     slug, version, preset = (payload.get(key) for key in ("strategy", "version", "preset"))
     if not isinstance(slug, str) or not isinstance(version, str) or not isinstance(preset, str):
         raise ValueError("backtest fields must be strings")
@@ -545,26 +545,45 @@ def start_backtest(payload: dict[str, Any]) -> str:
     days = payload.get("days")
     if isinstance(days, bool) or days not in {90, 365}:
         raise ValueError("days must be 90 or 365")
-    require_active_runtime()
+    runtime_missing = not runtime_status().get("installed")
+    if runtime_missing and payload.get("confirm_runtime") is not True:
+        raise ValueError("RUNTIME_CONFIRMATION_REQUIRED: confirm the locked Research runtime download")
     with JOBS_LOCK:
         _prune_jobs()
         if any(job["status"] in {"queued", "running"} for job in JOBS.values()):
             raise ConflictError("another backtest is already running")
         job_id = secrets.token_urlsafe(18)
         now = time.time()
-        JOBS[job_id] = {"job_id": job_id, "status": "queued", "strategy": slug, "version": version, "preset": preset, "days": days, "created_at": now, "updated_at": now}
+        JOBS[job_id] = {"job_id": job_id, "status": "queued", "stage": "preparing", "message": "准备运行环境",
+                        "downloaded_bytes": 0, "total_bytes": None, "percent": None,
+                        "strategy": slug, "version": version, "preset": preset, "days": days, "created_at": now, "updated_at": now}
 
     def worker() -> None:
         with JOBS_LOCK:
             job = JOBS[job_id]
             job.update(status="running", updated_at=time.time())
         try:
+            if runtime_missing:
+                product_root = Path(__file__).resolve().parents[2]
+                def progress(stage: str, message: str, downloaded: int | None, total: int | None) -> None:
+                    with JOBS_LOCK:
+                        current = JOBS[job_id]
+                        percent = round(downloaded * 100 / total, 1) if downloaded is not None and total else None
+                        current.update(stage=stage, message=message, downloaded_bytes=downloaded or 0,
+                                       total_bytes=total, percent=percent, updated_at=time.time())
+                install_runtime(product_root, product_root / "runtime-lock.json", accept_download=True, progress_callback=progress)
+            with JOBS_LOCK:
+                JOBS[job_id].update(stage="starting_backtest", message="启动回测", percent=100, updated_at=time.time())
             result = _run_backtest_process(slug, version, preset, days)
-            update = {"status": "succeeded", "run_id": result["run_id"]}
+            update = {"status": "succeeded", "stage": "complete", "message": "回测完成", "run_id": result["run_id"]}
         except Exception as error:  # job must always reach a terminal state
             message = str(error)
-            code = "PUBLIC_DATA_DOWNLOAD_FAILED" if message.startswith("PUBLIC_DATA_") else ("CATALOG_DATA_MISSING" if message.startswith("CATALOG_DATA_MISSING:") else "BACKTEST_FAILED")
-            update = {"status": "failed", "error": {"code": code, "message": message}}
+            code = ("PUBLIC_DATA_UNSUPPORTED" if message.startswith("PUBLIC_DATA_UNSUPPORTED:")
+                    else "PUBLIC_DATA_DOWNLOAD_FAILED" if message.startswith("PUBLIC_DATA_DOWNLOAD_FAILED:")
+                    else "CATALOG_DATA_MISSING" if message.startswith("CATALOG_DATA_MISSING:")
+                    else "BACKTEST_FAILED")
+            update = {"status": "failed", "stage": "failed", "message": "运行环境安装或回测失败，可安全重试；推荐和历史结果不受影响。",
+                      "error": {"code": code, "message": message}}
         with JOBS_LOCK:
             if job_id in JOBS:
                 JOBS[job_id].update(update, updated_at=time.time())
@@ -630,6 +649,42 @@ def _recommendation_error(handler: BaseHTTPRequestHandler, error: ResearchRecomm
     status = 503 if error.status in {500, 503} else error.status
     headers = {"Retry-After": str(error.retry_after)} if error.retry_after is not None else None
     _json_response(handler, {"error": payload}, status, headers)
+
+
+def _download_error_response(handler: BaseHTTPRequestHandler, error: ResearchDownloadError) -> None:
+    if isinstance(error, ResearchDownloadQuotaError):
+        payload: dict[str, Any] = {
+            "code": error.code,
+            "message": "当前来源网络下载额度已用尽",
+            "retryable": True,
+            "limiting_scopes": error.limiting_scopes,
+            "quotas": error.quotas,
+        }
+        if error.request_id is not None:
+            payload["request_id"] = error.request_id
+        return _json_response(
+            handler,
+            {"error": payload},
+            429,
+            {"Retry-After": str(error.retry_after)},
+        )
+    payload = {
+        "code": error.code,
+        "message": (
+            "Research strategy download quota service is temporarily unavailable"
+            if error.code == "DOWNLOAD_QUOTA_UNAVAILABLE"
+            else "Too many strategy download requests; try again later"
+            if error.code == "RATE_LIMITED"
+            else "Research strategy download failed"
+        ),
+        "retryable": error.retryable,
+    }
+    if error.retry_after is not None:
+        payload["retry_after"] = error.retry_after
+    if error.request_id is not None:
+        payload["request_id"] = error.request_id
+    headers = {"Retry-After": str(error.retry_after)} if error.retry_after is not None else None
+    _json_response(handler, {"error": payload}, error.status, headers)
 
 
 def _network_error(handler: BaseHTTPRequestHandler, error: urllib.error.URLError) -> None:
@@ -724,6 +779,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/config":
                 return _json_response(self, {"product": "edgepilot-research", "version": __version__, "locales": list(LOCALES), "runtime": _safe_runtime(), "process": getattr(self.server, "research_identity", {})})
             if parsed.path == "/api/health":
+                identity = getattr(self.server, "edgepilot_identity", None)
+                if isinstance(identity, dict) and secrets.compare_digest(self.headers.get("X-EdgePilot-Instance", ""), str(identity.get("instance_nonce", ""))):
+                    return _json_response(self, identity)
                 return _json_response(self, {"ok": True, **getattr(self.server, "research_identity", {})})
             query = parse_qs(parsed.query, keep_blank_values=True)
             if parsed.path == "/api/marketplace/strategies":
@@ -741,6 +799,10 @@ class Handler(BaseHTTPRequestHandler):
                 return _json_response(self, _installed(match.group(1)))
             if parsed.path == "/api/runs":
                 return _json_response(self, run_records(query.get("strategy", [""])[0]))
+            if parsed.path == "/api/jobs":
+                with JOBS_LOCK:
+                    _prune_jobs()
+                    return _json_response(self, [_job_view(job) for job in sorted(JOBS.values(), key=lambda row: row["updated_at"], reverse=True)])
             match = re.fullmatch(r"/api/runs/([^/]+)", parsed.path)
             if match:
                 return _json_response(self, run_detail(match.group(1)))
@@ -798,6 +860,8 @@ class Handler(BaseHTTPRequestHandler):
             return _error(self, "NOT_FOUND", "not found", 404)
         except ResearchRecommendationError as error:
             return _recommendation_error(self, error)
+        except ResearchDownloadError as error:
+            return _download_error_response(self, error)
         except ConflictError as error:
             return _error(self, "CONFLICT", str(error), 409)
         except InstallConflictError as error:

@@ -32,13 +32,13 @@ def run(
         available = ", ".join(path.stem for path in sorted((strategy_root / "configs").glob("*.json")))
         raise ValueError(f"preset {selected!r} does not exist; available: {available or '(none)'}")
     try:
-        from edgepilot_backtest_core.discovery import resolve_strategy
-        from edgepilot_backtest_core.models import BacktestRequest, MarketRequest, VenueRequest
-        from edgepilot_backtest_core.presets import preset_backtest_values, preset_markets, preset_strategy_values, preset_venues
-        from edgepilot_backtest_core.research import run_backtest
+        from edgepilot_core.backtest.discovery import resolve_strategy
+        from edgepilot_core.backtest.models import BacktestRequest, MarketRequest, VenueRequest
+        from edgepilot_core.backtest.presets import preset_backtest_values, preset_markets, preset_strategy_values, preset_venues
+        from edgepilot_core.backtest.research import run_backtest
         from .reporting import export_reports
     except ImportError as error:
-        raise ValueError("RUNTIME_INCOMPLETE: edgepilot-backtest-core or a locked dependency is unavailable") from error
+        raise ValueError("RUNTIME_INCOMPLETE: edgepilot-core or a locked dependency is unavailable") from error
     preset_value = json.loads(preset_path.read_text(encoding="utf-8"))
     if not isinstance(preset_value, dict):
         raise ValueError("strategy preset must contain an object")
@@ -100,7 +100,7 @@ def _tree_digest(root: Path) -> str:
 
 def _core_version() -> str:
     try:
-        from edgepilot_backtest_core import __version__
+        from edgepilot_core import __version__
         return str(__version__)
     except (ImportError, AttributeError):
         return "unknown"
