@@ -20,7 +20,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
-from typing import Any
+from typing import Any, Callable, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
@@ -270,7 +270,8 @@ def _strategy_record(directory: Path, locale: str) -> dict[str, Any]:
         translated = translations[locale]
     capacity = manifest.get("capacity") if isinstance(manifest.get("capacity"), dict) else {}
     markets = manifest.get("markets") if isinstance(manifest.get("markets"), dict) else {}
-    assets = markets.get("assets") if isinstance(markets.get("assets"), list) else []
+    assets_value = markets.get("assets")
+    assets: list[Any] = assets_value if isinstance(assets_value, list) else []
     risk_profile = manifest.get("risk_profile")
     record = {
         "slug": slug,
@@ -536,15 +537,21 @@ def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -
 def start_backtest(payload: dict[str, Any]) -> str:
     if set(payload) not in ({"strategy", "version", "preset", "days"}, {"strategy", "version", "preset", "days", "confirm_runtime"}):
         raise ValueError("backtest accepts only strategy, version, preset, days, and optional confirm_runtime")
-    slug, version, preset = (payload.get(key) for key in ("strategy", "version", "preset"))
-    if not isinstance(slug, str) or not isinstance(version, str) or not isinstance(preset, str):
+    slug_value = payload.get("strategy")
+    version_value = payload.get("version")
+    preset_value = payload.get("preset")
+    if not isinstance(slug_value, str) or not isinstance(version_value, str) or not isinstance(preset_value, str):
         raise ValueError("backtest fields must be strings")
-    installed = _installed(slug)
-    if version != installed["version"] or preset not in installed["presets"]:
+    backtest_slug: str = slug_value
+    backtest_version: str = version_value
+    backtest_preset: str = preset_value
+    installed = _installed(backtest_slug)
+    if backtest_version != installed["version"] or backtest_preset not in installed["presets"]:
         raise ValueError("installed strategy version or preset does not match")
-    days = payload.get("days")
-    if isinstance(days, bool) or days not in {90, 365}:
+    days_value = payload.get("days")
+    if type(days_value) is not int or days_value not in {90, 365}:
         raise ValueError("days must be 90 or 365")
+    backtest_days: int = days_value
     runtime_missing = not runtime_status().get("installed")
     if runtime_missing and payload.get("confirm_runtime") is not True:
         raise ValueError("RUNTIME_CONFIRMATION_REQUIRED: confirm the locked Research runtime download")
@@ -556,7 +563,8 @@ def start_backtest(payload: dict[str, Any]) -> str:
         now = time.time()
         JOBS[job_id] = {"job_id": job_id, "status": "queued", "stage": "preparing", "message": "准备运行环境",
                         "downloaded_bytes": 0, "total_bytes": None, "percent": None,
-                        "strategy": slug, "version": version, "preset": preset, "days": days, "created_at": now, "updated_at": now}
+                        "strategy": backtest_slug, "version": backtest_version, "preset": backtest_preset,
+                        "days": backtest_days, "created_at": now, "updated_at": now}
 
     def worker() -> None:
         with JOBS_LOCK:
@@ -574,7 +582,12 @@ def start_backtest(payload: dict[str, Any]) -> str:
                 install_runtime(product_root, product_root / "runtime-lock.json", accept_download=True, progress_callback=progress)
             with JOBS_LOCK:
                 JOBS[job_id].update(stage="starting_backtest", message="启动回测", percent=100, updated_at=time.time())
-            result = _run_backtest_process(slug, version, preset, days)
+            result = _run_backtest_process(
+                backtest_slug,
+                backtest_version,
+                backtest_preset,
+                backtest_days,
+            )
             update = {"status": "succeeded", "stage": "complete", "message": "回测完成", "run_id": result["run_id"]}
         except Exception as error:  # job must always reach a terminal state
             message = str(error)
@@ -668,7 +681,7 @@ def _download_error_response(handler: BaseHTTPRequestHandler, error: ResearchDow
             429,
             {"Retry-After": str(error.retry_after)},
         )
-    payload = {
+    payload: dict[str, Any] = {
         "code": error.code,
         "message": (
             "Research strategy download quota service is temporarily unavailable"
@@ -717,8 +730,9 @@ def marketplace_preflight() -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "EdgePilotResearch/1.0"
 
-    def log_message(self, _format: str, *args: object) -> None:
-        LOGGER.info("research dashboard request", extra={"method": self.command, "path": urlparse(self.path).path, "status": args[1] if len(args) > 1 else None})
+    def log_message(self, format: str, *args: Any) -> None:
+        del format
+        LOGGER.info("research dashboard request", extra={"method": self.command, "path": urlparse(str(self.path)).path, "status": args[1] if len(args) > 1 else None})
 
     def _origin(self) -> str:
         host, port = self.server.server_address[:2]
@@ -730,7 +744,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _valid_write(self) -> bool:
         token = getattr(self.server, "research_csrf", "")
-        return self._valid_host() and self.headers.get("Origin") == self._origin() and secrets.compare_digest(self.headers.get("X-EdgePilot-CSRF", ""), token)
+        return (
+            self._valid_host()
+            and isinstance(token, str)
+            and self.headers.get("Origin") == self._origin()
+            and secrets.compare_digest(str(self.headers.get("X-EdgePilot-CSRF", "")), token)
+        )
 
     def _body(self) -> dict[str, Any]:
         if self.headers.get_content_type() != "application/json":
@@ -766,47 +785,54 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
+        parsed = urlparse(str(self.path))
+        parsed_path = str(parsed.path)
         try:
             if not self._valid_host():
                 return _error(self, "INVALID_HOST", "invalid Host header", 400)
-            if parsed.path == "/":
+            if parsed_path == "/":
                 return self._asset("index.html")
-            if parsed.path.startswith("/assets/") or parsed.path.startswith("/brand/"):
-                return self._asset(parsed.path.removeprefix("/"))
-            if parsed.path == "/api/bootstrap":
+            if parsed_path.startswith("/assets/") or parsed_path.startswith("/brand/"):
+                return self._asset(parsed_path.removeprefix("/"))
+            if parsed_path == "/api/bootstrap":
                 return _json_response(self, {"csrf_token": getattr(self.server, "research_csrf", "")})
-            if parsed.path == "/api/config":
+            if parsed_path == "/api/config":
                 return _json_response(self, {"product": "edgepilot-research", "version": __version__, "locales": list(LOCALES), "runtime": _safe_runtime(), "process": getattr(self.server, "research_identity", {})})
-            if parsed.path == "/api/health":
+            if parsed_path == "/api/health":
                 identity = getattr(self.server, "edgepilot_identity", None)
-                if isinstance(identity, dict) and secrets.compare_digest(self.headers.get("X-EdgePilot-Instance", ""), str(identity.get("instance_nonce", ""))):
+                if isinstance(identity, dict) and secrets.compare_digest(str(self.headers.get("X-EdgePilot-Instance", "")), str(identity.get("instance_nonce", ""))):
                     return _json_response(self, identity)
                 return _json_response(self, {"ok": True, **getattr(self.server, "research_identity", {})})
-            query = parse_qs(parsed.query, keep_blank_values=True)
-            if parsed.path == "/api/marketplace/strategies":
-                return _json_response(self, search(query.get("q", [""])[0], sort=query.get("sort", ["published"])[0], locale=_locale(query.get("locale", ["en"])[0]), limit=int(query.get("limit", ["100"])[0])))
-            match = re.fullmatch(r"/api/marketplace/strategies/([^/]+)/versions", parsed.path)
+            query: dict[str, list[str]] = parse_qs(str(parsed.query), keep_blank_values=True)
+            if parsed_path == "/api/marketplace/strategies":
+                return _json_response(self, search(
+                    query.get("q", [""])[0],
+                    sort=query.get("sort", ["published"])[0],
+                    locale=_locale(query.get("locale", ["en"])[0]),
+                    limit=int(query.get("limit", ["100"])[0]),
+                    venue=query.get("venue", [""])[0],
+                ))
+            match = re.fullmatch(r"/api/marketplace/strategies/([^/]+)/versions", parsed_path)
             if match:
                 return _json_response(self, versions(match.group(1)))
-            match = re.fullmatch(r"/api/marketplace/strategies/([^/]+)/([^/]+)", parsed.path)
+            match = re.fullmatch(r"/api/marketplace/strategies/([^/]+)/([^/]+)", parsed_path)
             if match:
                 return _json_response(self, inspect(match.group(1), match.group(2), locale=_locale(query.get("locale", ["en"])[0])))
-            if parsed.path == "/api/strategies":
+            if parsed_path == "/api/strategies":
                 return _json_response(self, strategy_records(_locale(query.get("locale", ["en"])[0])))
-            match = re.fullmatch(r"/api/strategies/([^/]+)", parsed.path)
+            match = re.fullmatch(r"/api/strategies/([^/]+)", parsed_path)
             if match:
                 return _json_response(self, _installed(match.group(1)))
-            if parsed.path == "/api/runs":
+            if parsed_path == "/api/runs":
                 return _json_response(self, run_records(query.get("strategy", [""])[0]))
-            if parsed.path == "/api/jobs":
+            if parsed_path == "/api/jobs":
                 with JOBS_LOCK:
                     _prune_jobs()
                     return _json_response(self, [_job_view(job) for job in sorted(JOBS.values(), key=lambda row: row["updated_at"], reverse=True)])
-            match = re.fullmatch(r"/api/runs/([^/]+)", parsed.path)
+            match = re.fullmatch(r"/api/runs/([^/]+)", parsed_path)
             if match:
                 return _json_response(self, run_detail(match.group(1)))
-            match = re.fullmatch(r"/api/jobs/([^/]+)", parsed.path)
+            match = re.fullmatch(r"/api/jobs/([^/]+)", parsed_path)
             if match:
                 if not JOB_ID.fullmatch(match.group(1)):
                     raise ValueError("invalid job id")
@@ -834,6 +860,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self._valid_write():
                 return _error(self, "CSRF_REJECTED", "invalid Host, Origin, or CSRF token", 403)
             payload = self._body()
+            if self.path == "/api/behavior-events":
+                from .behavior_events import record_behavior_event
+                record_behavior_event(payload)
+                return _json_response(self, {"accepted": True}, 202)
             if self.path == "/api/marketplace/recommendations":
                 if set(payload) != RECOMMENDATION_FIELDS:
                     raise ValueError("recommendation accepts only the canonical V2 questionnaire fields")
@@ -888,7 +918,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not self._valid_write() or self.headers.get("X-EdgePilot-Confirm") != "delete":
                 return _error(self, "CSRF_REJECTED", "invalid confirmation, Host, Origin, or CSRF token", 403)
-            match = re.fullmatch(r"/api/strategies/([^/]+)", urlparse(self.path).path)
+            match = re.fullmatch(r"/api/strategies/([^/]+)", str(urlparse(str(self.path)).path))
             if not match:
                 return _error(self, "NOT_FOUND", "not found", 404)
             remove_strategy(match.group(1))
@@ -902,7 +932,8 @@ class Handler(BaseHTTPRequestHandler):
 def create_server(host: str, port: int, *, instance_nonce: str | None = None) -> ThreadingHTTPServer:
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("Research UI must bind to loopback")
-    server = ThreadingHTTPServer((host, port), Handler)
+    handler = cast(Callable[[Any, Any, ThreadingHTTPServer], BaseHTTPRequestHandler], Handler)
+    server = ThreadingHTTPServer((host, port), handler)
     server.research_csrf = secrets.token_urlsafe(32)  # type: ignore[attr-defined]
     bound_host, bound_port = server.server_address[:2]
     server.research_identity = _dashboard_identity(str(bound_host), int(bound_port), instance_nonce or secrets.token_urlsafe(24))  # type: ignore[attr-defined]

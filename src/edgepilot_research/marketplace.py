@@ -23,6 +23,7 @@ from .process import pid_exists as _pid_is_alive
 ORIGIN = os.environ.get("EDGEPILOT_RESEARCH_ORIGIN", "https://edge-pilot.rivendell.capital").rstrip("/")
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]{0,63}$")
+VENUE = re.compile(r"^[A-Z0-9_]{1,64}$")
 RECOMMENDATION_FIELDS = {
     "questionnaire_version", "profit_style", "holding_period", "pain_point",
     "max_drawdown_pct", "trading_mode", "allocation_band", "universe", "locale",
@@ -95,14 +96,25 @@ def _json(path: str, query: dict[str, str] | None = None) -> dict[str, Any]:
     return value
 
 
-def search(query: str = "", *, sort: str = "published", locale: str = "en", limit: int = 100) -> dict[str, Any]:
+def search(
+    query: str = "", *, sort: str = "published", locale: str = "en", limit: int = 100,
+    venue: str = "",
+) -> dict[str, Any]:
     if not isinstance(query, str) or len(query) > 200:
         raise ValueError("Marketplace query must be at most 200 characters")
     if sort not in {"published", "return", "drawdown", "sharpe"}:
         raise ValueError("Invalid Marketplace sort")
     if type(limit) is not int or limit < 1 or limit > 100:
         raise ValueError("Marketplace limit must be from 1 to 100")
-    return _json("/api/research/strategies", {"q": query, "sort": sort, "locale": locale, "limit": str(limit)})
+    if not isinstance(venue, str):
+        raise ValueError("Marketplace venue must be a string")
+    normalized_venue = venue.strip().upper()
+    if normalized_venue and not VENUE.fullmatch(normalized_venue):
+        raise ValueError("Marketplace venue must be an exchange code of at most 64 characters")
+    return _json(
+        "/api/research/strategies",
+        {"q": query, "sort": sort, "locale": locale, "limit": str(limit), "venue": normalized_venue},
+    )
 
 
 def recommend(questionnaire: dict[str, Any]) -> dict[str, Any]:
@@ -130,7 +142,11 @@ def recommend(questionnaire: dict[str, Any]) -> dict[str, Any]:
         detail = value.get("error") if isinstance(value, dict) else None
         code = detail.get("code") if isinstance(detail, dict) else None
         retryable = detail.get("retryable") if isinstance(detail, dict) else None
-        if code not in RECOMMENDATION_ERRORS.get(error.code, set()) or type(retryable) is not bool:
+        if (
+            not isinstance(code, str)
+            or code not in RECOMMENDATION_ERRORS.get(error.code, set())
+            or not isinstance(retryable, bool)
+        ):
             raise ResearchRecommendationError("REMOTE_HTTP_ERROR", 502, True) from error
         retry_after = _retry_after(error.headers.get("Retry-After", "") if error.headers else "") if error.code == 429 else None
         raise ResearchRecommendationError(code, error.code, retryable, retry_after) from error
@@ -270,7 +286,8 @@ def install(slug: str, version: str) -> Path:
                     raise ValueError("Research package expands beyond its limit")
                 destination = staging.joinpath(*path.parts); destination.parent.mkdir(parents=True, exist_ok=True)
                 with package.open(item) as source, destination.open("wb") as output:
-                    shutil.copyfileobj(source, output)
+                    while chunk := source.read(1024 * 1024):
+                        output.write(chunk)
         required = ("marketplace.json", "__init__.py", "strategy.py")
         missing = [name for name in required if not (staging / name).is_file()]
         if missing:
@@ -331,7 +348,7 @@ def _acquire_install_lock(target: Path, install_lock: Path) -> None:
         pid = value.get("pid") if isinstance(value, dict) else None
     except (OSError, ValueError, json.JSONDecodeError):
         pid = None
-    if type(pid) is int and pid > 0 and _pid_is_alive(pid):
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 and _pid_is_alive(pid):
         raise InstallConflictError(f"another install is already changing {target.name.replace('_', '-')}")
     backups = sorted(target.parent.glob(target.name + ".previous-*"))
     if len(backups) > 1 or (target.exists() and backups):

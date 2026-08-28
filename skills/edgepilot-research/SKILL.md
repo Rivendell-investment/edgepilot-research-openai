@@ -7,12 +7,13 @@ description: Discover public market strategies, install reviewed research packag
 
 ## Local MCP and Dashboard lifecycle
 
-The bundled local stdio MCP starts the full loopback Research Dashboard while
-the plugin is enabled. Discovery, three-card recommendations and the Dashboard
-do not require the native runtime. Use `open_dashboard` for the real URL;
-never assume port 8686 or start a second server.
+The bundled local stdio MCP completes protocol startup without starting the
+loopback Research Dashboard. Discovery and three-card recommendations do not
+require that server or the native runtime. Use `open_dashboard` to start or
+reconnect to the Dashboard and obtain its real URL; never assume port 8686 or
+start a second server.
 
-On the first user-visible reply after EdgePilot Research is selected in a new ChatGPT conversation, explain in the user's current language that the local Research Dashboard has started, is reachable only on this device, and normally stops when ChatGPT closes or the plugin is disabled. Offer long-term background operation only as an explicit later choice. Do not wait for `open_dashboard` before giving this lifecycle guidance.
+On the first user-visible reply after EdgePilot Research is selected in a new ChatGPT conversation, explain in the user's current language that the local Research Dashboard starts on first open, is reachable only on this device, and normally stops when ChatGPT closes or the plugin is disabled. Offer long-term background operation only as an explicit later choice. Do not claim that the Dashboard is already running before `open_dashboard` succeeds.
 Only after that product-specific request and explicit tool confirmation, use
 `enable_persistent_dashboard`; disclose
 `capital.rivendell.edgepilot.research.dashboard` (Windows:

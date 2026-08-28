@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
-from .paths import runtime_state_path, state_root
+from .paths import state_root
 from .process import pid_exists as _pid_exists
 
 SCHEMA = "edgepilot-research-runtime-v1"
@@ -699,6 +699,15 @@ def _valid_file(path: Path, wheel: Wheel) -> bool:
     return digest.hexdigest() == wheel.sha256
 
 
+def _core_source(root: Path) -> Path:
+    packaged = root / "core_src" / "edgepilot_core"
+    if packaged.is_dir():
+        return packaged
+    checkout = root.parent / "edgepilot-core" / "src" / "edgepilot_core"
+    is_source_checkout = (root / "ui" / "package.json").is_file() and (root.parent / "ARCHITECTURE.md").is_file()
+    return checkout if is_source_checkout and checkout.is_dir() else packaged
+
+
 def _plugin_digest(root: Path) -> str:
     digest = hashlib.sha256()
     fixed = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json", "runtime-lock.json", "pyproject.toml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "DATA_SOURCES.md")
@@ -709,22 +718,31 @@ def _plugin_digest(root: Path) -> str:
         digest.update(relative.encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
     for tree in ("src", "core_src", "bundled", "skills", "assets", "licenses"):
         base = root / tree
+        prefix = PurePosixPath(tree)
+        if tree == "core_src" and not base.exists():
+            core = _core_source(root)
+            if core.is_dir():
+                base = core
+                prefix /= "edgepilot_core"
         if not base.exists():
             continue
         for path in sorted(item for item in base.rglob("*") if item.is_file() and "__pycache__" not in item.parts and item.suffix not in {".pyc", ".pyo"}):
             if path.is_symlink():
                 raise ValueError("plugin source cannot contain symbolic links")
-            name = path.relative_to(root).as_posix().encode()
+            name = (prefix / path.relative_to(base).as_posix()).as_posix().encode()
             digest.update(name + b"\0" + hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
 
 
 def _copy_app(root: Path, destination: Path) -> None:
     destination.mkdir()
-    sources = [(root / "src" / "edgepilot_research", destination / "edgepilot_research"), (root / "core_src" / "edgepilot_core", destination / "edgepilot_core")]
-    for source, target in sources:
+    sources = [
+        (root / "src" / "edgepilot_research", destination / "edgepilot_research", "src/edgepilot_research"),
+        (_core_source(root), destination / "edgepilot_core", "core_src/edgepilot_core"),
+    ]
+    for source, target, expected in sources:
         if not source.is_dir():
-            raise ValueError(f"plugin is missing {source.relative_to(root)}")
+            raise ValueError(f"plugin is missing {expected}")
         for path in source.rglob("*"):
             if path.is_symlink():
                 raise ValueError("plugin app source cannot contain symbolic links")

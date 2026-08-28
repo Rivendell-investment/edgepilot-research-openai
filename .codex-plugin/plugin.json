@@ -1,6 +1,6 @@
 {
   "name": "edgepilot-research",
-  "version": "0.1.30",
+  "version": "0.12.38",
   "description": "Publicly installable proprietary software for market strategy research and reproducible backtesting without accounts or trading.",
   "author": {
     "name": "Rivendell Holdings Investment Limited"
@@ -12,9 +12,9 @@
     "shortDescription": "Research public strategies",
     "longDescription": "Search public research strategies, inspect settings, run historical backtests, and save reproducible reports without connecting a trading account.",
     "developerName": "Rivendell Holdings Investment Limited",
-    "websiteURL": "https://edge-pilot.rivendell.capital/",
-    "privacyPolicyURL": "https://edge-pilot.rivendell.capital/privacy",
-    "termsOfServiceURL": "https://edge-pilot.rivendell.capital/terms",
+    "websiteURL": "https://www.edgepilotai.io/",
+    "privacyPolicyURL": "https://www.edgepilotai.io/privacy/",
+    "termsOfServiceURL": "https://www.edgepilotai.io/terms/",
     "category": "Data & Analytics",
     "logo": "./assets/edgepilot-research.svg",
     "capabilities": [],

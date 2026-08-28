@@ -9,7 +9,23 @@ from typing import Any
 from .data import _benchmark_preset, _installed_strategy
 from .paths import state_root
 from .runtime import require_active_runtime, runtime_status
-from .public_data import ensure_public_data, research_period
+from .public_data import _canonical_close_window, ensure_public_data, research_period
+
+VENUE_FIELDS = {
+    "starting_balance",
+    "base_currency",
+    "account_type",
+    "oms_type",
+    "maker_fee_bps",
+    "taker_fee_bps",
+    "default_leverage",
+    "leverages",
+    "allow_cash_borrowing",
+    "liquidation_enabled",
+    "liquidation_trigger_ratio",
+    "liquidation_cancel_open_orders",
+    "adapter_options",
+}
 
 
 def strategies() -> list[str]:
@@ -33,7 +49,7 @@ def run(
         raise ValueError(f"preset {selected!r} does not exist; available: {available or '(none)'}")
     try:
         from edgepilot_core.backtest.discovery import resolve_strategy
-        from edgepilot_core.backtest.models import BacktestRequest, MarketRequest, VenueRequest
+        from edgepilot_core.backtest.models import BacktestRequest, MarketRequest
         from edgepilot_core.backtest.presets import preset_backtest_values, preset_markets, preset_strategy_values, preset_venues
         from edgepilot_core.backtest.research import run_backtest
         from .reporting import export_reports
@@ -45,7 +61,7 @@ def run(
     backtest = preset_backtest_values(preset_value)
     markets = tuple(MarketRequest(**market) for market in preset_markets(preset_value))
     venue_values = preset_venues(preset_value)
-    venues = tuple(VenueRequest(name=name, **{key: value for key, value in values.items() if key != "adapter_options"}) for name, values in venue_values.items())
+    venues = _venue_requests(venue_values)
     start, end = research_period(days, markets)
     request = BacktestRequest(
         strategy=resolve_strategy(strategy_root.name, strategies_root=strategy_root.parent),
@@ -71,6 +87,37 @@ def run(
     if not isinstance(metrics, dict):
         raise ValueError("backtest core returned an invalid result")
     return result
+
+
+def _venue_requests(venue_values: dict[str, dict[str, Any]]) -> tuple[Any, ...]:
+    from edgepilot_core.backtest.models import VenueRequest
+    from edgepilot_core.backtest.presets import public_adapter_options
+
+    venues = []
+    for name, settings in venue_values.items():
+        explicit_options = settings.get("adapter_options", {})
+        if not isinstance(explicit_options, dict):
+            raise TypeError(f"Venue adapter_options for {name} must be an object")
+        venues.append(VenueRequest(
+            name=name,
+            adapter_options={
+                **public_adapter_options({key: value for key, value in settings.items() if key not in VENUE_FIELDS}),
+                **public_adapter_options(explicit_options),
+            },
+            starting_balance=float(settings.get("starting_balance", 100_000.0)),
+            base_currency=str(settings.get("base_currency", "USDT")),
+            account_type=str(settings.get("account_type", "MARGIN")),
+            oms_type=str(settings.get("oms_type", "NETTING")),
+            maker_fee_bps=settings.get("maker_fee_bps"),
+            taker_fee_bps=settings.get("taker_fee_bps"),
+            default_leverage=float(settings.get("default_leverage", 1.0)),
+            leverages=settings.get("leverages"),
+            allow_cash_borrowing=bool(settings.get("allow_cash_borrowing", False)),
+            liquidation_enabled=bool(settings.get("liquidation_enabled", False)),
+            liquidation_trigger_ratio=float(settings.get("liquidation_trigger_ratio", 1.0)),
+            liquidation_cancel_open_orders=bool(settings.get("liquidation_cancel_open_orders", True)),
+        ))
+    return tuple(venues)
 
 
 def _attach_research_provenance(run_path: Path, *, strategy_root: Path, preset_path: Path, catalog_path: Path) -> None:
@@ -114,17 +161,22 @@ def _require_catalog(catalog_path: Path, markets: tuple[Any, ...], strategy: str
             from nautilus_trader.model.data import BarType
             from nautilus_trader.persistence.catalog import ParquetDataCatalog
             catalog = ParquetDataCatalog(str(catalog_path))
-            start_ns = int(start.timestamp() * 1_000_000_000)
-            end_ns = int(end.timestamp() * 1_000_000_000)
             missing = []
             for index, market in enumerate(markets):
                 bars = catalog.bars(bar_types=[market.bar_type])
                 interval_ns = int(BarType.from_str(market.bar_type).spec.timedelta.total_seconds() * 1_000_000_000)
+                first_close_ns, last_close_ns = _canonical_close_window(start, end, interval_ns)
+                available = {
+                    bar.ts_event
+                    for bar in bars
+                    if first_close_ns <= bar.ts_event <= last_close_ns
+                }
                 if (
                     not catalog.instruments(instrument_ids=[market.instrument_id])
-                    or not bars
-                    or min(bar.ts_event for bar in bars) > start_ns + interval_ns
-                    or max(bar.ts_event for bar in bars) < end_ns
+                    or any(
+                        timestamp not in available
+                        for timestamp in range(first_close_ns, last_close_ns + 1, interval_ns)
+                    )
                 ):
                     missing.append(index)
         except Exception as error:

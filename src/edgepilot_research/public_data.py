@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,43 @@ from .paths import state_root
 
 UTC = timezone.utc
 ALLOWED_DAYS = {90, 365}
+
+
+def _https_proxy_url() -> str | None:
+    """Forward a standard process-local HTTPS proxy to the native client."""
+    return os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+
+
+def _canonical_close_window(
+    start: datetime,
+    end: datetime,
+    interval_ns: int,
+) -> tuple[int, int]:
+    """Return the first and last completed bar closes in canonical ``[start, end)``."""
+    if interval_ns <= 0:
+        raise ValueError("Research bar interval must be positive")
+    start_ns = int(start.timestamp() * 1_000_000_000)
+    end_ns = int(end.timestamp() * 1_000_000_000)
+    first_close_ns = ((start_ns + interval_ns - 1) // interval_ns) * interval_ns
+    last_close_ns = ((end_ns - 1) // interval_ns) * interval_ns
+    if first_close_ns > last_close_ns:
+        raise ValueError("Research period contains no complete bar close")
+    return first_close_ns, last_close_ns
+
+
+def _binance_request_window(
+    start: datetime,
+    end: datetime,
+    interval_ns: int,
+) -> tuple[int, int, int, int]:
+    """Map the canonical [start, end) close window to Binance open times."""
+    first_close_ns, last_close_ns = _canonical_close_window(start, end, interval_ns)
+    return (
+        (first_close_ns - interval_ns) // 1_000_000,
+        (last_close_ns - interval_ns) // 1_000_000,
+        first_close_ns,
+        last_close_ns,
+    )
 
 
 def research_period(days: int, markets: tuple[Any, ...], now: datetime | None = None) -> tuple[datetime, datetime]:
@@ -103,7 +141,8 @@ async def _download_binance(
     clock = LiveClock()
     client = get_cached_binance_http_client(
         clock=clock, account_type=account_type, api_key=None, api_secret=None,
-        base_url=None, environment=BinanceEnvironment.LIVE, is_us=False, proxy_url=None,
+        base_url=None, environment=BinanceEnvironment.LIVE, is_us=False,
+        proxy_url=_https_proxy_url(),
     )
     provider = BinanceFuturesInstrumentProvider(
         client=client,
@@ -123,22 +162,27 @@ async def _download_binance(
         interval = BinanceKlineInterval(f"{parsed.spec.step}{resolution}")
     except ValueError as error:
         raise ValueError(f"unsupported Binance interval: {parsed.spec}") from error
+    interval_ns = int(parsed.spec.timedelta.total_seconds() * 1_000_000_000)
+    request_start_ms, request_end_ms, first_close_ns, last_close_ns = _binance_request_window(
+        start,
+        end,
+        interval_ns,
+    )
     market = BinanceFuturesMarketHttpAPI(client, account_type=account_type)
     downloaded = await market.request_binance_bars(
         bar_type=parsed,
         interval=interval,
-        start_time=int(start.timestamp() * 1_000),
-        end_time=int(end.timestamp() * 1_000),
+        start_time=request_start_ms,
+        end_time=request_end_ms,
         limit=1_000,
     )
-    interval_ns = int(parsed.spec.timedelta.total_seconds() * 1_000_000_000)
     catalog = ParquetDataCatalog(str(catalog_path))
     existing = {bar.ts_event for bar in catalog.bars(bar_types=[bar_type])}
     bars = []
     for bar in downloaded:
         values = Bar.to_dict(bar)
         close_ns = ((bar.ts_event + interval_ns - 1) // interval_ns) * interval_ns
-        if close_ns in existing or close_ns > int(end.timestamp() * 1_000_000_000):
+        if close_ns < first_close_ns or close_ns > last_close_ns or close_ns in existing:
             continue
         values["ts_event"] = values["ts_init"] = close_ns
         bars.append(Bar.from_dict(values))
@@ -147,7 +191,8 @@ async def _download_binance(
     if bars:
         _write_contiguous(catalog, bars, interval_ns)
     available = catalog.bars(bar_types=[bar_type])
-    if not available or min(bar.ts_event for bar in available) > int(start.timestamp() * 1_000_000_000) + interval_ns or max(bar.ts_event for bar in available) < int(end.timestamp() * 1_000_000_000):
+    if not available or min(bar.ts_event for bar in available) > first_close_ns \
+            or max(bar.ts_event for bar in available) < last_close_ns:
         raise ValueError(f"Binance returned incomplete {bar_type} data for {start.isoformat()} to {end.isoformat()}")
 
 
