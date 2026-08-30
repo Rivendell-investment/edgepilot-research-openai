@@ -152,7 +152,9 @@ Never start the manual launcher while the bundled MCP Dashboard is available. To
 
 Downloaded Research packages are executable Python code. Only install first-party packages returned by the reviewed Research catalog. The runtime executes the formal `strategy.py` with NautilusTrader and the Manifest V2 benchmark preset; it never executes `research.py`.
 
-Backtests accept only `--days 90` or `--days 365` (default 90). Before execution, Research reads the selected preset's instrument, bar type, venue and Futures account type, then atomically fills that exact period from the reviewed Binance public market-data client. It never accepts an arbitrary data URL, reads credentials, initializes an execution client, or places orders. Automatic download currently supports Binance Futures bar markets only; return `PUBLIC_DATA_UNSUPPORTED` for other venues or data types.
+Backtests accept only `--days 90` or `--days 365` (default 90). Before execution, Research reads the selected preset's venue, instrument, bar type and venue settings, then atomically fills that exact period from that venue's reviewed public market-data client. It never accepts an arbitrary data URL, reads credentials, initializes an execution client, or places orders. Automatic download supports the reviewed venues only — currently Binance Futures and OKX bar markets; return `PUBLIC_DATA_UNSUPPORTED` for any other venue or data type. A period on a venue that pages a hundred bars at a time can take several minutes to fill; report the progress the backtest emits rather than presenting it as stalled.
+
+A preset binds exactly one exchange. When a strategy ships more than one, say which exchange each preset reaches, and do not describe a backtest result as reproducing the strategy card's published numbers: Research always runs the most recent selected period, not the benchmark window.
 
 Users may still import a local CSV explicitly:
 

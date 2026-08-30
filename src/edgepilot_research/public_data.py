@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -9,46 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from .paths import state_root
+from .public_data_venues import provider_for, supported_venues
 
 UTC = timezone.utc
 ALLOWED_DAYS = {90, 365}
 
-
-def _https_proxy_url() -> str | None:
-    """Forward a standard process-local HTTPS proxy to the native client."""
-    return os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
-
-
-def _canonical_close_window(
-    start: datetime,
-    end: datetime,
-    interval_ns: int,
-) -> tuple[int, int]:
-    """Return the first and last completed bar closes in canonical ``[start, end)``."""
-    if interval_ns <= 0:
-        raise ValueError("Research bar interval must be positive")
-    start_ns = int(start.timestamp() * 1_000_000_000)
-    end_ns = int(end.timestamp() * 1_000_000_000)
-    first_close_ns = ((start_ns + interval_ns - 1) // interval_ns) * interval_ns
-    last_close_ns = ((end_ns - 1) // interval_ns) * interval_ns
-    if first_close_ns > last_close_ns:
-        raise ValueError("Research period contains no complete bar close")
-    return first_close_ns, last_close_ns
-
-
-def _binance_request_window(
-    start: datetime,
-    end: datetime,
-    interval_ns: int,
-) -> tuple[int, int, int, int]:
-    """Map the canonical [start, end) close window to Binance open times."""
-    first_close_ns, last_close_ns = _canonical_close_window(start, end, interval_ns)
-    return (
-        (first_close_ns - interval_ns) // 1_000_000,
-        (last_close_ns - interval_ns) // 1_000_000,
-        first_close_ns,
-        last_close_ns,
-    )
+__all__ = [
+    "ALLOWED_DAYS",
+    "ensure_public_data",
+    "research_period",
+    "supported_venues",
+]
 
 
 def research_period(days: int, markets: tuple[Any, ...], now: datetime | None = None) -> tuple[datetime, datetime]:
@@ -89,13 +59,17 @@ def ensure_public_data(
             shutil.copytree(target, staging, dirs_exist_ok=True)
         for market in markets:
             venue = str(market.venue).upper()
-            if venue != "BINANCE" or market.data_type != "bars":
-                raise ValueError(f"PUBLIC_DATA_UNSUPPORTED: automatic Research download supports Binance bars only, not {venue} {market.data_type}")
+            provider = provider_for(venue)
+            if provider is None:
+                raise ValueError(
+                    f"PUBLIC_DATA_UNSUPPORTED: automatic Research download supports "
+                    f"{', '.join(supported_venues())} bars only, not {venue} {market.data_type}",
+                )
             settings = venue_values.get(venue, {})
-            account_type = str(settings.get("account_type", ""))
-            if account_type not in {"USDT_FUTURES", "COIN_FUTURES"}:
-                raise ValueError("PUBLIC_DATA_UNSUPPORTED: Binance Research download requires a Futures account_type in the preset")
-            asyncio.run(_download_binance(staging, market.instrument_id, market.bar_type, account_type, start, end))
+            reason = provider.unsupported_reason(market, settings)
+            if reason is not None:
+                raise ValueError(f"PUBLIC_DATA_UNSUPPORTED: {reason}")
+            asyncio.run(provider.download(staging, market, settings, start, end))
         if backup.exists():
             shutil.rmtree(backup)
         if target.exists():
@@ -115,94 +89,3 @@ def ensure_public_data(
         elif backup.exists():
             shutil.rmtree(backup)
         lock.rmdir()
-
-
-async def _download_binance(
-    catalog_path: Path,
-    instrument_id: str,
-    bar_type: str,
-    account_type_name: str,
-    start: datetime,
-    end: datetime,
-) -> None:
-    from nautilus_trader.adapters.binance.common.enums import BinanceAccountType, BinanceEnvironment, BinanceKlineInterval
-    from nautilus_trader.adapters.binance.factories import get_cached_binance_http_client
-    from nautilus_trader.adapters.binance.futures.enums import BinanceFuturesEnumParser
-    from nautilus_trader.adapters.binance.futures.http.market import BinanceFuturesMarketHttpAPI
-    from nautilus_trader.adapters.binance.futures.providers import BinanceFuturesInstrumentProvider
-    from nautilus_trader.common.component import LiveClock
-    from nautilus_trader.config import InstrumentProviderConfig
-    from nautilus_trader.model.data import Bar, BarType
-    from nautilus_trader.model.identifiers import InstrumentId
-    from nautilus_trader.persistence.catalog import ParquetDataCatalog
-
-    account_type = BinanceAccountType[account_type_name]
-    identifier = InstrumentId.from_str(instrument_id)
-    clock = LiveClock()
-    client = get_cached_binance_http_client(
-        clock=clock, account_type=account_type, api_key=None, api_secret=None,
-        base_url=None, environment=BinanceEnvironment.LIVE, is_us=False,
-        proxy_url=_https_proxy_url(),
-    )
-    provider = BinanceFuturesInstrumentProvider(
-        client=client,
-        clock=clock,
-        account_type=account_type,
-        config=InstrumentProviderConfig(load_all=False, load_ids=frozenset({identifier})),
-    )
-    await provider.initialize()
-    instrument = provider.find(identifier)
-    if instrument is None:
-        raise ValueError(f"Binance did not return instrument {instrument_id}")
-    parsed = BarType.from_str(bar_type)
-    if not parsed.spec.is_time_aggregated() or not str(bar_type).endswith("-LAST-EXTERNAL"):
-        raise ValueError(f"unsupported Binance Research bar type: {bar_type}")
-    resolution = BinanceFuturesEnumParser().parse_nautilus_bar_aggregation(parsed.spec.aggregation)
-    try:
-        interval = BinanceKlineInterval(f"{parsed.spec.step}{resolution}")
-    except ValueError as error:
-        raise ValueError(f"unsupported Binance interval: {parsed.spec}") from error
-    interval_ns = int(parsed.spec.timedelta.total_seconds() * 1_000_000_000)
-    request_start_ms, request_end_ms, first_close_ns, last_close_ns = _binance_request_window(
-        start,
-        end,
-        interval_ns,
-    )
-    market = BinanceFuturesMarketHttpAPI(client, account_type=account_type)
-    downloaded = await market.request_binance_bars(
-        bar_type=parsed,
-        interval=interval,
-        start_time=request_start_ms,
-        end_time=request_end_ms,
-        limit=1_000,
-    )
-    catalog = ParquetDataCatalog(str(catalog_path))
-    existing = {bar.ts_event for bar in catalog.bars(bar_types=[bar_type])}
-    bars = []
-    for bar in downloaded:
-        values = Bar.to_dict(bar)
-        close_ns = ((bar.ts_event + interval_ns - 1) // interval_ns) * interval_ns
-        if close_ns < first_close_ns or close_ns > last_close_ns or close_ns in existing:
-            continue
-        values["ts_event"] = values["ts_init"] = close_ns
-        bars.append(Bar.from_dict(values))
-        existing.add(close_ns)
-    catalog.write_data([instrument])
-    if bars:
-        _write_contiguous(catalog, bars, interval_ns)
-    available = catalog.bars(bar_types=[bar_type])
-    if not available or min(bar.ts_event for bar in available) > first_close_ns \
-            or max(bar.ts_event for bar in available) < last_close_ns:
-        raise ValueError(f"Binance returned incomplete {bar_type} data for {start.isoformat()} to {end.isoformat()}")
-
-
-def _write_contiguous(catalog: Any, bars: list[Any], interval_ns: int) -> None:
-    ordered = sorted(bars, key=lambda bar: bar.ts_event)
-    segment = [ordered[0]]
-    for bar in ordered[1:]:
-        if bar.ts_event == segment[-1].ts_event + interval_ns:
-            segment.append(bar)
-        else:
-            catalog.write_data(segment)
-            segment = [bar]
-    catalog.write_data(segment)

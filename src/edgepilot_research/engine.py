@@ -9,7 +9,8 @@ from typing import Any
 from .data import _benchmark_preset, _installed_strategy
 from .paths import state_root
 from .runtime import require_active_runtime, runtime_status
-from .public_data import _canonical_close_window, ensure_public_data, research_period
+from .public_data import ensure_public_data, research_period
+from .public_data_venues import canonical_close_window as _canonical_close_window
 
 VENUE_FIELDS = {
     "starting_balance",

@@ -27,6 +27,7 @@ from . import __version__
 from .marketplace import DigestMismatchError, IDENTIFIER, InstallConflictError, RECOMMENDATION_FIELDS, ResearchDownloadError, ResearchDownloadQuotaError, ResearchRecommendationError, VERSION, inspect, install, recommend, search, versions
 from .paths import state_root
 from .process import pid_exists as _pid_exists
+from .public_data_venues import PROGRESS_PREFIX
 from .runtime import active_runtime_python, install_runtime, runtime_install_info, runtime_status
 
 ASSETS = Path(__file__).with_name("ui_assets") / "app"
@@ -246,6 +247,43 @@ def _safe_text(value: Any, maximum: int = 4096) -> str:
     return value
 
 
+def _preset_venues(configs: Path, presets: list[str]) -> dict[str, list[str]]:
+    """Report which venue each preset is bound to.
+
+    A preset binds exactly one venue because ``strategy.instrument_id`` carries a
+    venue suffix, so the catalogue's exchange label cannot tell a user which of
+    an installed strategy's presets reaches which exchange. The rule matches the
+    one Live's deploy dialog uses: the market venues that the preset also
+    configures an account for.
+    """
+    result: dict[str, list[str]] = {}
+    for name in presets:
+        try:
+            value = _read_json(configs / f"{name}.json")
+        except (OSError, ValueError):
+            # The server validates only the default preset's contents, so an
+            # extra preset may be unreadable; that costs this preset its label,
+            # never the whole strategy listing.
+            continue
+        backtest = value.get("backtest") if isinstance(value, dict) else None
+        if not isinstance(backtest, dict):
+            continue
+        markets = backtest.get("markets")
+        venues = backtest.get("venues")
+        if not isinstance(markets, list) or not isinstance(venues, dict):
+            continue
+        configured = {str(key).upper() for key in venues}
+        used = {
+            str(market.get("venue", "")).upper()
+            for market in markets
+            if isinstance(market, dict) and market.get("venue")
+        }
+        selectable = sorted(used & configured)
+        if selectable:
+            result[name] = selectable
+    return result
+
+
 def _strategy_record(directory: Path, locale: str) -> dict[str, Any]:
     install_record = _read_json(directory / ".edgepilot-install.json")
     manifest = _read_json(directory / "marketplace.json")
@@ -281,6 +319,7 @@ def _strategy_record(directory: Path, locale: str) -> dict[str, Any]:
         "description": _safe_text(translated.get("description"), 64 * 1024) or _safe_text(manifest.get("description"), 64 * 1024),
         "content_locale": locale if translated else "en",
         "presets": presets,
+        "preset_venues": _preset_venues(configs, presets),
         "benchmark_preset": benchmark_preset,
         "package_sha256": install_record.get("package_sha256"),
         "risk_profile": risk_profile if risk_profile in {"conservative", "balanced", "aggressive"} else None,
@@ -491,7 +530,25 @@ def _backtest_result(output: str, *, strategy: str, version: str, preset: str, d
     return result
 
 
-def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -> dict[str, Any]:
+def _progress_update(line: str) -> dict[str, Any] | None:
+    """Decode one progress line emitted by the backtest child process."""
+    stripped = _strip_ansi(line).strip()
+    if not stripped.startswith(PROGRESS_PREFIX):
+        return None
+    try:
+        value = json.loads(stripped[len(PROGRESS_PREFIX):])
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _run_backtest_process(
+    strategy: str,
+    version: str,
+    preset: str,
+    days: int,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Run Nautilus in a disposable process so its global logger cannot kill the Dashboard."""
     product_root = Path(__file__).resolve().parents[2]
     source = product_root / "src"
@@ -500,7 +557,10 @@ def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -
         core = product_root.parent / "edgepilot-core" / "src"
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     env["PYTHONPATH"] = os.pathsep.join([str(source), str(core)])
-    completed = subprocess.run(
+    # Streamed rather than captured in one call: filling a long period from a
+    # venue that pages 100 bars at a time takes minutes, and the Dashboard has
+    # nothing to show until the child exits otherwise.
+    with subprocess.Popen(
         [
             str(active_runtime_python()),
             "-m",
@@ -521,12 +581,20 @@ def _run_backtest_process(strategy: str, version: str, preset: str, days: int) -
         text=True,
         encoding="utf-8",
         errors="replace",
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(_backtest_process_error(completed.stdout, completed.returncode))
+    ) as process:
+        lines: list[str] = []
+        for line in process.stdout or ():
+            update = _progress_update(line)
+            if update is None:
+                lines.append(line)
+            elif progress is not None:
+                progress(update)
+        returncode = process.wait()
+    output = "".join(lines)
+    if returncode != 0:
+        raise RuntimeError(_backtest_process_error(output, returncode))
     return _backtest_result(
-        completed.stdout,
+        output,
         strategy=strategy,
         version=version,
         preset=preset,
@@ -582,11 +650,27 @@ def start_backtest(payload: dict[str, Any]) -> str:
                 install_runtime(product_root, product_root / "runtime-lock.json", accept_download=True, progress_callback=progress)
             with JOBS_LOCK:
                 JOBS[job_id].update(stage="starting_backtest", message="启动回测", percent=100, updated_at=time.time())
+
+            def data_progress(update: dict[str, Any]) -> None:
+                done, total = update.get("done"), update.get("total")
+                complete = isinstance(done, int) and isinstance(total, int) and total > 0
+                with JOBS_LOCK:
+                    current = JOBS.get(job_id)
+                    if current is None:
+                        return
+                    current.update(
+                        stage=str(update.get("stage") or "downloading_data"),
+                        message=str(update.get("message") or "下载行情"),
+                        percent=round(done * 100 / total, 1) if complete else None,
+                        updated_at=time.time(),
+                    )
+
             result = _run_backtest_process(
                 backtest_slug,
                 backtest_version,
                 backtest_preset,
                 backtest_days,
+                data_progress,
             )
             update = {"status": "succeeded", "stage": "complete", "message": "回测完成", "run_id": result["run_id"]}
         except Exception as error:  # job must always reach a terminal state
