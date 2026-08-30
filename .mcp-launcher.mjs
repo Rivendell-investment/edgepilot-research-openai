@@ -9,6 +9,9 @@ if (!entry) {
 const candidates = process.platform === "win32"
   ? [["py", ["-3", entry]], ["python", [entry]], ["python3", [entry]]]
   : [["python3", [entry]], ["python", [entry]]];
+const productionEnv = { ...process.env };
+delete productionEnv.EDGEPILOT_RESEARCH_HOME;
+delete productionEnv.EDGEPILOT_RESEARCH_ORIGIN;
 let activeChild;
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -21,7 +24,7 @@ function start(index) {
     process.exit(127);
   }
   const [command, args] = candidates[index];
-  const child = spawn(command, args, { cwd: process.cwd(), env: process.env, stdio: "inherit" });
+  const child = spawn(command, args, { cwd: process.cwd(), env: productionEnv, stdio: "inherit" });
   activeChild = child;
   child.once("error", (error) => {
     if (error.code === "ENOENT") start(index + 1);

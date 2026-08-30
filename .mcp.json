@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "edgepilot-research-0-12-42": {
+    "edgepilot-research-0-12-43": {
       "type": "stdio",
       "command": "node",
       "args": [
@@ -11,9 +11,7 @@
       "enabled": true,
       "env_vars": [
         "PATH",
-        "APPDATA",
-        "EDGEPILOT_RESEARCH_HOME",
-        "EDGEPILOT_RESEARCH_ORIGIN"
+        "APPDATA"
       ],
       "startup_timeout_sec": 10,
       "tool_timeout_sec": 30
