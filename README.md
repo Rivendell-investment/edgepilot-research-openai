@@ -23,6 +23,8 @@ The plugin deliberately contains no third-party wheels. On a supported local-exe
 
 The bundled Codex stdio MCP completes its protocol startup without starting the loopback Dashboard. The first `open_dashboard` call starts or reconnects to the Dashboard without the native runtime and returns its real URL; the default port is attempted once and may fall back to an operating-system-assigned loopback port. Installation reports each cache/download file and the venv, install, verification, and activation stages. The first confirmed Dashboard backtest installs the content-addressed runtime in the existing job, displays real network-download bytes, and automatically continues the backtest with the active runtime Python. Manual CLI backtests use the stable state-directory launcher (`~/.edgepilot-research/bin/edgepilot-research` on macOS or `%APPDATA%\EdgePilotResearch\bin\edgepilot-research.cmd` on Windows).
 
+Before replacing plugin files, the installer runs the candidate package's lightweight `skills/edgepilot-research/scripts/stop_local_dashboard.py --stop-if-running`. It does not require the native runtime: it reports `not_running` for a fresh install, or stops only the bundled Dashboard whose private record, health nonce and authenticated stop handshake agree. An unverifiable or incompatible service stops in-place activation instead of triggering a PID- or process-name-based kill; Codex restart remains the fallback.
+
 Runtime, strategies, catalog data and runs are isolated under `~/.edgepilot-research/` (or `%APPDATA%\EdgePilotResearch` on Windows). The installer writes `bin/edgepilot-research` and, on Windows, `bin/edgepilot-research.cmd`. After installation, run that launcher by absolute path for every command, including `runtime status`, `backtest`, and `ui`. Do not invoke the plugin with host Python or `python -m edgepilot_research`; that skips the locked venv, so the Dashboard can report a local runtime while backtests fail with `edgepilot-core is unavailable`. `runtime repair` validates state and rewrites the launcher; `runtime uninstall --yes` removes only runtime files and preserves strategies, catalog and runs.
 
 The first release lock supports macOS arm64 with CPython 3.12 (206,943,606 bytes across 15 wheels) and Windows amd64 with CPython 3.12 (159,195,940 bytes across 15 wheels). Intel Macs are not supported. Linux is not in the first release: the existing CPython 3.14 Nautilus wheel cannot currently form a binary-only dependency closure because a compatible `msgspec>=0.21.1` wheel is unavailable. Unsupported platforms fail with supported-hardware guidance before downloading or changing runtime state. An Apple Silicon Mac running through Rosetta is identified separately and told to retry from a native arm64 process.
@@ -44,14 +46,20 @@ After installation, the ChatGPT plugin exposes `Help me choose a strategy` and `
 ## Post-install guidance
 
 After installation, reply in the user's current conversation language and tell
-them to create a new Codex task. Translate the following prompt naturally while
+them to create a new Codex task without restarting when the verified Dashboard
+preflight reports `not_running` or `stopped`; in that case no full Codex restart is required when
+`verify_activation` reports `activation: ready`. Restart Codex only when a verified
+old Dashboard remains, the new task does not expose the installed MCP, or activation
+reports a version mismatch. Translate the following prompt naturally while
 preserving the exact `@EdgePilot Research` mention and its request to ask about
 preferences one question at a time, obtain confirmation, and show three
-recommendation cards:
+recommendation cards followed by the Research Dashboard button:
 
 ```text
-@EdgePilot Research Help me choose a research strategy. Ask about my preferences one question at a time, then show three strategy recommendation cards after I confirm them.
+@EdgePilot Research Help me choose a research strategy. Ask about my preferences one question at a time, then show three strategy recommendation cards after I confirm them. Please open the Research Dashboard at the same time.
 ```
+
+The new task completes the questionnaire first. After confirmation it renders the three recommendation cards and the existing local control center, whose **Open Dashboard** button starts or reconnects to the verified Research Dashboard. This flow does not install or check the native runtime.
 
 The Dashboard Marketplace includes **Find the right strategy**. Its independent page collects seven canonical answers plus one optional in-memory note, displays the complete three-result response, and can install or update the chosen exact version before opening its benchmark preset workspace. It does not automatically install the runtime, download data, or start a backtest. A catalog change between recommendation and installation is reported explicitly; the Dashboard never substitutes another result or version.
 

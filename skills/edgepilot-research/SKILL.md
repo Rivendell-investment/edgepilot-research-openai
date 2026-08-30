@@ -14,6 +14,21 @@ reconnect to the Dashboard and obtain its real URL; never assume port 8686 or
 start a second server.
 
 On the first user-visible reply after EdgePilot Research is selected in a new ChatGPT conversation, explain in the user's current language that the local Research Dashboard starts on first open, is reachable only on this device, and normally stops when ChatGPT closes or the plugin is disabled. Offer long-term background operation only as an explicit later choice. Do not claim that the Dashboard is already running before `open_dashboard` succeeds.
+<!-- CODEX_ACTIVATION_START -->
+Before the first preference question, call the read-only `verify_activation` tool. If it reports `activation: "ready"`, ask the first question in the same reply. If it reports `restart_required`, explain that a verified Research Dashboard from another plugin version is still running and ask the user to restart Codex, then continue in a new task. Never infer activation from a PID, process name, port scan, or plugin files alone.
+
+For install or upgrade, inspect the candidate package's bundled Dashboard before replacing files:
+
+```bash
+python3 skills/edgepilot-research/scripts/stop_local_dashboard.py --stop-if-running
+```
+
+```bat
+py -3 skills\edgepilot-research\scripts\stop_local_dashboard.py --stop-if-running
+```
+
+The helper returns `not_running` for a fresh install, stops only the bundled Dashboard whose private record and health nonce agree, and refuses when the stop handshake cannot be verified. When it returns `not_running` or `stopped`, install the files and ask the user to create a new Codex task without restarting. Restart Codex only if a verified old Dashboard remains, the new task does not expose the installed MCP, or `verify_activation` reports a version mismatch. Never kill Python by name or PID alone, and never remove Research runtime or user state during plugin activation.
+<!-- CODEX_ACTIVATION_END -->
 Only after that product-specific request and explicit tool confirmation, use
 `enable_persistent_dashboard`; disclose
 `capital.rivendell.edgepilot.research.dashboard` (Windows:
@@ -22,7 +37,7 @@ confirm and use `disable_persistent_dashboard`. Never change the Live service.
 
 ## First-run strategy guidance
 
-Treat `Help me choose a strategy` and `Show me the available strategies` as onboarding routes, not one-shot answers. Reply in the user's current conversation language. If the user changes language, switch immediately without discarding confirmed answers. Keep offering one concrete next action until the user chooses an exact strategy version, ends the flow, or a real capability boundary prevents the handoff. Do not check the runtime, request login, open the Dashboard, download a package, or install anything during discovery and matching.
+Treat `Help me choose a strategy` and `Show me the available strategies` as onboarding routes, not one-shot answers. Reply in the user's current conversation language. If the user changes language, switch immediately without discarding confirmed answers. Keep offering one concrete next action until the user chooses an exact strategy version, ends the flow, or a real capability boundary prevents the handoff. Do not check the runtime, request login, start the Dashboard, download a package, or install anything while the questionnaire is incomplete.
 
 Start with a short, naturally translated welcome carrying this meaning: EdgePilot Research helps clarify a strategy idea and test it with historical data; it can help choose when the user has no direction or help test an existing idea. Chinese wording is only an example, never a fixed response for every language.
 
@@ -39,6 +54,8 @@ For `Help me choose a strategy`, immediately begin the existing V2 questionnaire
 Reuse answers already clear from the conversation and ask the user to choose among the current three options when meaning is ambiguous. After all seven answers, show a localized summary and accept an optional note of at most 500 Unicode code points for user review only. Do not send the note, free text, derived fields, custom weights, or unknown fields to the recommendation tool. Map locale to `en`, `ko`, `zh-CN`, or `zh-TW`; for other languages keep conversing in that language, submit `locale=en`, and disclose that strategy names or summaries may fall back to English.
 
 When the bundled `recommend_strategies` MCP tool is available, call it with only `questionnaire_version: "2.0"`, the seven confirmed canonical answers, and `locale`. Using that tool is required because its structured result is bound to the ChatGPT recommendation-card UI. Do not replace it with a direct HTTP or CLI request. Accept only a complete three-card response with distinct slugs and the unchanged roles and order `best_fit`, `safer`, `more_aggressive`. Preserve the top-level recommendation identity, versions, snapshot, normalized profile, candidate and exclusion counts, and `fallbacks`. For every card preserve the exact `slug`, `version`, `preset`, `role`, `match_score`, `score_breakdown`, `strategy_profile`, `evidence`, `matched_reasons`, `tradeoffs`, and `warnings`; translate controlled explanations without changing their meaning. Never score, rank, fill, reorder, replace, or relax constraints. Keep the text fallback concise when ChatGPT renders the cards. On `CATALOG_COVERAGE_INSUFFICIENT`, rate limiting, network failure, or a partial response, explain the failure and do not fabricate a recommendation.
+
+When the onboarding request also asks to open the Research Dashboard, wait until `recommend_strategies` successfully renders the three cards, then call `open_control_center` so ChatGPT shows the existing **Open Dashboard** button. Tell the user to use that button; the button calls `open_dashboard` and opens only the verified URL returned by the current MCP. Do not call `open_dashboard` before the user presses the button. Showing the control center and opening the bundled Dashboard never checks or installs the native runtime.
 
 If the current surface does not expose `recommend_strategies`, preserve and summarize the canonical answers, explain that this surface can browse the anonymous Research catalog but cannot render the formal three-card match, and offer continued catalog exploration. Guide the user to **Find the right strategy** only when a current Research Dashboard or generated launcher is already available. Never install or check the native runtime merely to obtain a recommendation. Do not require login, silently switch to the Live product, claim a formal recommendation, or reproduce the scoring algorithm.
 
