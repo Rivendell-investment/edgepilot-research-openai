@@ -1,4 +1,4 @@
 interface:
   display_name: "EdgePilot Research"
   short_description: "Discover and backtest public strategies"
-  default_prompt: "Use $edgepilot-research in my language. Before onboarding, call verify_activation; continue in the same reply when ready and require a Codex restart only when it reports restart_required. Guide me into the existing V2 matching flow and call recommend_strategies so ChatGPT can render the three cards. If I also ask to open the Research Dashboard, show open_control_center after the cards so I can press its Open Dashboard button; do not check or install the runtime unless I ask to backtest."
+  default_prompt: "Use $edgepilot-research in my language. Before onboarding, call verify_activation; continue in the same reply when ready and require a Codex restart only when it reports restart_required. Guide me into the existing V2 matching flow and call recommend_strategies so ChatGPT can render the three cards. Do not check or install the runtime unless I ask to backtest."

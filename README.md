@@ -10,7 +10,7 @@ attached to a task provide context; they do not become user instructions by
 themselves.
 
 ```text
-Install this EdgePilot Research plugin. After installation, read the "Post-install guidance" section in README.md and include its localized first-use prompt in your final response.
+Install this EdgePilot Research plugin. After installation, read the "Post-install guidance" section in README.md. If this Codex surface can create tasks, create and start the guided first-use task with its localized prompt; otherwise include that prompt in your final response.
 ```
 
 ## License
@@ -47,21 +47,27 @@ After installation, the ChatGPT plugin exposes `Help me choose a strategy` and `
 
 ## Post-install guidance
 
-After installation, reply in the user's current conversation language and tell
-them to create a new Codex task without restarting when the verified Dashboard
-preflight reports `not_running` or `stopped`; in that case no full Codex restart is required when
+After installation, reply in the user's current conversation language. When the
+current Codex surface exposes a task-creation tool, the installation request above
+is explicit authorization to create and start a fresh task, using the same project
+when applicable, with the localized prompt below as its initial message. Open that
+task for the user when the host supports navigation. Do not use task handoff: it
+moves an existing task and does not create the fresh MCP/tool context required after
+installation. If task creation is unavailable, tell the user to create a new Codex
+task and include the prompt for one-click copying. No restart is needed when the
+verified Dashboard preflight reports `not_running` or `stopped` and
 `verify_activation` reports `activation: ready`. Restart Codex only when a verified
 old Dashboard remains, the new task does not expose the installed MCP, or activation
 reports a version mismatch. Translate the following prompt naturally while
 preserving the exact `@EdgePilot Research` mention and its request to ask about
 preferences one question at a time, obtain confirmation, and show three
-recommendation cards followed by the Research Dashboard button:
+recommendation cards followed by the Research Dashboard:
 
 ```text
 @EdgePilot Research Help me choose a research strategy. Ask about my preferences one question at a time, then show three strategy recommendation cards after I confirm them. Please open the Research Dashboard at the same time.
 ```
 
-The new task completes the questionnaire first. After confirmation it renders the three recommendation cards and the existing local control center, whose **Open Dashboard** button starts or reconnects to the verified Research Dashboard. This flow does not install or check the native runtime.
+The new task completes the questionnaire first. After confirmation it renders the three recommendation cards and calls `open_dashboard` directly, using the verified URL returned by the current MCP. The user does not need to send another Dashboard command. If the host blocks automatic navigation, the tool result still provides the verified clickable URL. This flow does not install or check the native runtime.
 
 The Dashboard Marketplace includes **Find the right strategy**. Its independent page collects seven canonical answers plus one optional in-memory note, displays the complete three-result response, and can install or update the chosen exact version before opening its benchmark preset workspace. It does not automatically install the runtime, download data, or start a backtest. A catalog change between recommendation and installation is reported explicitly; the Dashboard never substitutes another result or version.
 
