@@ -2,6 +2,11 @@
 
 Public, account-free strategy discovery and reproducible historical backtesting. This product does not connect trading accounts, accept exchange credentials, or place orders.
 
+The repository-wide publication, catalog, recommendation, installation and
+backtest state machine is defined in the repository-root authority at
+`docs/strategy-catalog-search-recommendation.md`.
+This README remains the Research user and packaging guide.
+
 ## Install with Codex
 
 When you attach this extracted plugin directory to a Codex task, send the whole
@@ -38,6 +43,8 @@ A preset binds exactly one exchange, because `strategy.instrument_id` carries a 
 Online catalog access is anonymous and limited to `/api/research/**`. Catalog search, inspection, formal three-card recommendations and package download do not require an account, login, token, cookie, machine ID, browser fingerprint, or installed runtime, and do not send runtime-lock metadata to the Marketplace service. The local MCP recommendation tool submits only the V2 seven-answer questionnaire and locale, and the service does not persist questionnaire answers. Results are research artifacts, not investment advice.
 
 The Dashboard catalog can filter by an exact logic-compatible exchange and displays those exchange codes on strategy cards. This label uses the published `strategy_logic_only` assessment: it does not claim that the local runtime can download that venue's public data, that the referenced instrument exists there, or that backtesting or live execution has been verified. Research backtests continue to enforce their separate public-data and runtime capabilities.
+
+Marketplace pagination includes first/previous controls, a bounded window of nearby page numbers, next/last controls, and an integer jump-to-page form. It uses the same page-size, placement, and summary contract as Live: one complete row after filters/notices and before strategy cards, with a left-side summary containing the total strategy count, current page, and total pages; Simplified Chinese renders this as “共 N 个策略 · 第 X/共 Y 页”, and every locale keeps an explicit page unit or its natural equivalent. The catalog shows 15 strategies by default, with 15, 30, 50, or 100 selectable. Changing page size resets to page one and recalculates the page count; search, sort, and compatible-exchange changes also reset to page one while retaining the selected size. A Research-specific browser local-storage key restores a valid selected size after refresh or reopening; missing, invalid, or unavailable storage falls back to 15. Page number, query, sort, and filters are not persisted. The catalog never renders one control per page or duplicates the controls below the cards, and jump input is clamped to the valid page range.
 
 Only strategy ZIP downloads consume the shared source-network quota: 20 per UTC day and 100 per UTC month. Search, inspection, version lists, recommendations, runtime wheels, public market data, and backtests do not consume it. IPv4 is limited by the complete address and IPv6 by its normalized `/64`; users behind a shared NAT therefore share the same allowance. An approved download counts even if streaming is interrupted, and a retry counts again. When the allowance is exhausted the CLI and Dashboard stop without modifying the installed strategy, catalog, runtime, or saved runs, show `DOWNLOAD_QUOTA_EXCEEDED`, the daily/monthly usage, and UTC reset times, and do not retry automatically.
 
@@ -79,7 +86,7 @@ A current Dashboard can be restarted safely with the stable launcher's `ui --sto
 
 ## Release status
 
-The runtime-download design is implemented in this repository, but public-directory acceptance is an external release gate. Packaging success does not mean that ChatGPT or Codex has approved local process execution, native wheel installation, runtime downloads, or every target surface. Before publishing, complete the checklist in [`../docs/research-v2-release.md`](../docs/research-v2-release.md), including native tests, license/SBOM review, HTTPS hosting, directory security scans, and end-to-end tests on every advertised surface. Unsupported surfaces must not be advertised.
+The runtime-download design is implemented in this repository, but public-directory acceptance is an external release gate. Packaging success does not mean that ChatGPT or Codex has approved local process execution, native wheel installation, runtime downloads, or every target surface. Before publishing, complete the repository-root `docs/research-v2-release.md` checklist, including native tests, license/SBOM review, HTTPS hosting, directory security scans, and end-to-end tests on every advertised surface. Unsupported surfaces must not be advertised.
 
 - Privacy: https://edge-pilot.rivendell.capital/privacy
 - Terms: https://edge-pilot.rivendell.capital/terms

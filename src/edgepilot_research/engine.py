@@ -39,6 +39,7 @@ def run(
     version: str,
     preset: str | None = None,
     days: int = 90,
+    venue: str | None = None,
 ) -> dict[str, Any]:
     """Run an exact installed formal strategy through the shared Nautilus core."""
     require_active_runtime()
@@ -52,13 +53,18 @@ def run(
         from edgepilot_core.backtest.discovery import resolve_strategy
         from edgepilot_core.backtest.models import BacktestRequest, MarketRequest
         from edgepilot_core.backtest.presets import preset_backtest_values, preset_markets, preset_strategy_values, preset_venues
+        from edgepilot_core.backtest.presets import preset_venue_options, resolve_preset
         from edgepilot_core.backtest.research import run_backtest
         from .reporting import export_reports
     except ImportError as error:
         raise ValueError("RUNTIME_INCOMPLETE: edgepilot-core or a locked dependency is unavailable") from error
-    preset_value = json.loads(preset_path.read_text(encoding="utf-8"))
-    if not isinstance(preset_value, dict):
+    published = json.loads(preset_path.read_text(encoding="utf-8"))
+    if not isinstance(published, dict):
         raise ValueError("strategy preset must contain an object")
+    # One preset can offer several venues; reduce to the requested one before anything
+    # downstream sees it, exactly as the Live plugin does.
+    selected_venue = (venue or "").strip().upper() or (preset_venue_options(published)[:1] or [""])[0]
+    preset_value = resolve_preset(published, selected_venue)
     backtest = preset_backtest_values(preset_value)
     markets = tuple(MarketRequest(**market) for market in preset_markets(preset_value))
     venue_values = preset_venues(preset_value)
@@ -83,8 +89,10 @@ def run(
         strategy_root=strategy_root,
         preset_path=preset_path,
         catalog_path=request.catalog_path,
+        resolved_preset=preset_value,
     )
-    result = {"run_id": run_id, "metrics": metrics, "strategy": strategy, "version": version, "preset": selected, "days": days}
+    result = {"run_id": run_id, "metrics": metrics, "strategy": strategy, "version": version,
+              "preset": selected, "venue": selected_venue, "days": days}
     if not isinstance(metrics, dict):
         raise ValueError("backtest core returned an invalid result")
     return result
@@ -121,7 +129,14 @@ def _venue_requests(venue_values: dict[str, dict[str, Any]]) -> tuple[Any, ...]:
     return tuple(venues)
 
 
-def _attach_research_provenance(run_path: Path, *, strategy_root: Path, preset_path: Path, catalog_path: Path) -> None:
+def _attach_research_provenance(
+    run_path: Path,
+    *,
+    strategy_root: Path,
+    preset_path: Path,
+    catalog_path: Path,
+    resolved_preset: dict[str, Any] | None = None,
+) -> None:
     record = json.loads(run_path.read_text(encoding="utf-8"))
     install = json.loads((strategy_root / ".edgepilot-install.json").read_text(encoding="utf-8"))
     runtime = runtime_status()
@@ -133,6 +148,11 @@ def _attach_research_provenance(run_path: Path, *, strategy_root: Path, preset_p
         "wheelhouse_sha256": runtime.get("wheelhouse_sha256"),
         "strategy_package_sha256": install.get("package_sha256"),
         "preset_sha256": hashlib.sha256(preset_path.read_bytes()).hexdigest(),
+        # The preset file is the same bytes for every venue it offers, so the file digest
+        # alone can no longer tell two runs apart.  Record what was actually executed.
+        "resolved_preset_sha256": hashlib.sha256(
+            json.dumps(resolved_preset, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        ).hexdigest() if resolved_preset is not None else None,
         "catalog_sha256": _tree_digest(catalog_path),
     }
     run_path.write_text(json.dumps(record, indent=2, default=str) + "\n", encoding="utf-8")

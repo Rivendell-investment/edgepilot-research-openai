@@ -98,7 +98,7 @@ def _json(path: str, query: dict[str, str] | None = None) -> dict[str, Any]:
 
 def search(
     query: str = "", *, sort: str = "published", locale: str = "en", limit: int = 100,
-    venue: str = "",
+    venue: str = "", page: int = 1,
 ) -> dict[str, Any]:
     if not isinstance(query, str) or len(query) > 200:
         raise ValueError("Marketplace query must be at most 200 characters")
@@ -106,6 +106,8 @@ def search(
         raise ValueError("Invalid Marketplace sort")
     if type(limit) is not int or limit < 1 or limit > 100:
         raise ValueError("Marketplace limit must be from 1 to 100")
+    if type(page) is not int or page < 1:
+        raise ValueError("Marketplace page must be a positive integer")
     if not isinstance(venue, str):
         raise ValueError("Marketplace venue must be a string")
     normalized_venue = venue.strip().upper()
@@ -113,7 +115,14 @@ def search(
         raise ValueError("Marketplace venue must be an exchange code of at most 64 characters")
     return _json(
         "/api/research/strategies",
-        {"q": query, "sort": sort, "locale": locale, "limit": str(limit), "venue": normalized_venue},
+        {
+            "q": query,
+            "sort": sort,
+            "locale": locale,
+            "page": str(page),
+            "page_size": str(limit),
+            "venue": normalized_venue,
+        },
     )
 
 
