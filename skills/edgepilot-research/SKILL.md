@@ -69,12 +69,12 @@ On `DOWNLOAD_QUOTA_EXCEEDED`, do not retry the download, install another version
 
 For an exact version confirmed visible in Research, offer factual comparison, details, or a historical backtest. Use `best_fit` and its returned preset by default only when the user has not selected another card. An unspecified request to "run" means historical backtesting, never Paper, Demo, or Live. Check or install the isolated runtime only after the user explicitly asks to backtest; opening the bundled local MCP Dashboard never installs it.
 
-Keep all state under `~/.edgepilot-research/` on macOS/Linux or `%APPDATA%\EdgePilotResearch` on Windows. Never read `~/.edgepilot/`. If `EDGEPILOT_RESEARCH_HOME` is set, use that directory instead.
+Keep all state under `~/.edgepilot-research/`; on Windows this is `%USERPROFILE%\.edgepilot-research`. Never read `~/.edgepilot/`. If `EDGEPILOT_RESEARCH_HOME` is set, use that directory instead.
 
 Host Python may run the bundled lightweight MCP/Dashboard and the bundled installer. It must not execute a backtest or import NautilusTrader. After installation, every runtime-dependent CLI command and any manually launched runtime Dashboard must use the generated launcher by absolute path; the installer does not add it to `PATH`. In this Skill, `edgepilot-research` always means that launcher:
 
 - macOS/Linux: `~/.edgepilot-research/bin/edgepilot-research`
-- Windows: `%APPDATA%\EdgePilotResearch\bin\edgepilot-research.cmd`
+- Windows: `%USERPROFILE%\.edgepilot-research\bin\edgepilot-research.cmd`
 
 Do not start a runtime-dependent CLI command or a second manual Dashboard with host `python`/`python3`/`py`, `python -m edgepilot_research`, or a `PYTHONPATH` that points at the plugin `src/`. Those invocations skip the locked venv. The bundled MCP entry point is the sole exception: Codex starts it from `.mcp.json`, it remains lightweight, and it delegates a confirmed backtest to the active runtime Python.
 
@@ -97,7 +97,7 @@ Then verify with the launcher, not host Python:
 ```
 
 ```bat
-%APPDATA%\EdgePilotResearch\bin\edgepilot-research.cmd runtime status
+%USERPROFILE%\.edgepilot-research\bin\edgepilot-research.cmd runtime status
 ```
 
 If the Windows `.cmd` exits with a syntax error, re-run the installer; an already-installed matching release still rewrites the launcher.
@@ -127,7 +127,7 @@ py -3 skills\edgepilot-research\scripts\install_runtime.py --wheelhouse %CD%
 
 Catalog GETs that bypass the CLI should use the same `-A "Mozilla/5.0"` (or `curl.exe` on Windows).
 
-After installation, use only the stable launcher under the Research state directory for CLI backtests and manually launched runtime commands. On Windows use `%APPDATA%\EdgePilotResearch\bin\edgepilot-research.cmd`. Do not run `edgepilot_research.cli` directly with the bootstrap/system Python. The already-running bundled MCP Dashboard remains valid because its backtest worker invokes that same active runtime Python. If the user requested only a CLI backtest, do not start another Dashboard.
+After installation, use only the stable launcher under the Research state directory for CLI backtests and manually launched runtime commands. On Windows use `%USERPROFILE%\.edgepilot-research\bin\edgepilot-research.cmd`. Do not run `edgepilot_research.cli` directly with the bootstrap/system Python. The already-running bundled MCP Dashboard remains valid because its backtest worker invokes that same active runtime Python. If the user requested only a CLI backtest, do not start another Dashboard.
 
 In the command examples below, `edgepilot-research` means that resolved stable launcher, not an unrelated executable found earlier on `PATH`.
 
@@ -158,7 +158,7 @@ When the plugin MCP is enabled, use `open_dashboard`; it returns the verified cu
 ```
 
 ```bat
-%APPDATA%\EdgePilotResearch\bin\edgepilot-research.cmd ui --host 127.0.0.1 --port 8686
+%USERPROFILE%\.edgepilot-research\bin\edgepilot-research.cmd ui --host 127.0.0.1 --port 8686
 ```
 
 Do not start a second Dashboard with host Python or open a cached page of a stopped backend. For the manual launcher fallback, keep the process session alive and verify that `/api/health` matches `dashboard.json` before opening it. If its Marketplace preflight exits with `DNS_FAILED`, `CONNECT_TIMEOUT`, or `REMOTE_CONNECTION_FAILED`, obtain network permission and retry rather than bypassing it. The bundled MCP Dashboard starts without a runtime or Marketplace preflight so cards and the local page remain available during transient network failure; individual Marketplace calls must still report the real network error.

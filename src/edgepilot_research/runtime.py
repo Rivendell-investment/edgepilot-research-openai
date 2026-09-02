@@ -311,8 +311,9 @@ def _check_release_path_length(final: Path) -> None:
         return
     raise ValueError(
         f"RUNTIME_PATH_TOO_LONG: release path {final} leaves too little room for the "
-        "venv site-packages DLL paths that Windows must load. Set EDGEPILOT_RESEARCH_HOME "
-        "to a short directory such as %USERPROFILE%\\.edgepilot-research and reinstall."
+        "venv site-packages DLL paths that Windows must load. Unset a long "
+        "EDGEPILOT_RESEARCH_HOME override to use %USERPROFILE%\\.edgepilot-research, "
+        "or configure another short directory, then reinstall."
     )
 
 
