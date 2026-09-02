@@ -299,6 +299,24 @@ def _read_state(path: Path, home: Path) -> dict[str, Any]:
     return value
 
 
+# Longest observed suffix under a release is about 110 characters
+# (.venv\Lib\site-packages\nautilus_trader\core\*.pyd plus its DLL neighbors);
+# beyond this prefix length Windows fails the final import with
+# "DLL load failed: the filename or extension is too long".
+_MAX_WINDOWS_RELEASE_PATH = 140
+
+
+def _check_release_path_length(final: Path) -> None:
+    if os.name != "nt" or len(str(final)) <= _MAX_WINDOWS_RELEASE_PATH:
+        return
+    raise ValueError(
+        f"RUNTIME_PATH_TOO_LONG: release path {final} leaves too little room for the "
+        "venv site-packages DLL paths that Windows must load. Unset a long "
+        "EDGEPILOT_RESEARCH_HOME override to use %USERPROFILE%\\.edgepilot-research, "
+        "or configure another short directory, then reinstall."
+    )
+
+
 def install_runtime(
     plugin_root: Path,
     lock_path: Path,
@@ -337,6 +355,7 @@ def install_runtime(
     releases = root / "releases"
     releases.mkdir(exist_ok=True)
     final = releases / release_id
+    _check_release_path_length(final)
     lock_dir = _acquire_install_lock(root, release_id)
     staging = releases / f".staging-{release_id[:12]}-{os.getpid()}"
     try:

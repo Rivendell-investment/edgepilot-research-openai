@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from . import binance, okx
+from . import binance, digifinex, okx
 from ._common import PROGRESS_PREFIX, canonical_close_window
 
 PROVIDERS: dict[str, ModuleType] = {
     "BINANCE": binance,
+    "DIGIFINEX": digifinex,
     "OKX": okx,
 }
 

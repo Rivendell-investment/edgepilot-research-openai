@@ -18,7 +18,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--version", action="version", version=__version__); commands = root.add_subparsers(dest="command", required=True)
     local = commands.add_parser("strategies"); local.add_argument("action", choices=["list", "inspect", "presets", "remove"], nargs="?", default="list"); local.add_argument("name", nargs="?")
     market = commands.add_parser("marketplace"); market.add_argument("action", choices=["search", "inspect", "versions", "install"]); market.add_argument("slug_or_query", nargs="?", default=""); market.add_argument("--version")
-    backtest = commands.add_parser("backtest"); backtest.add_argument("strategy"); backtest.add_argument("--version", required=True); backtest.add_argument("--preset"); backtest.add_argument("--days", type=int, choices=[90, 365], default=90)
+    backtest = commands.add_parser("backtest"); backtest.add_argument("strategy"); backtest.add_argument("--version", required=True); backtest.add_argument("--preset"); backtest.add_argument("--days", type=int, choices=[90, 365], default=90); backtest.add_argument("--venue", default="")
     runs = commands.add_parser("runs"); runs.add_argument("action", choices=["list", "show"], nargs="?", default="list"); runs.add_argument("run_id", nargs="?")
     data = commands.add_parser("data"); data.add_argument("action", choices=["import"]); data.add_argument("--strategy", required=True); data.add_argument("--version", required=True); data.add_argument("--market", required=True, type=int); data.add_argument("--csv", required=True, type=Path); data.add_argument("--instrument-json", required=True, type=Path)
     runtime = commands.add_parser("runtime"); runtime.add_argument("action", choices=["status", "repair", "uninstall"]); runtime.add_argument("--break-install-lock", action="store_true"); runtime.add_argument("--yes", action="store_true")
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
                     metadata = target / "marketplace.json"; print(metadata.read_text(encoding="utf-8") if metadata.exists() else json.dumps({"name": args.name}))
         elif args.command == "backtest":
             from .engine import run
-            print(json.dumps(run(args.strategy, args.version, args.preset, args.days), indent=2))
+            print(json.dumps(run(args.strategy, args.version, args.preset, args.days, args.venue), indent=2))
         elif args.command == "marketplace":
             if args.action == "search": value = search(args.slug_or_query)
             elif args.action == "versions": value = versions(args.slug_or_query)

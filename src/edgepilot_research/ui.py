@@ -248,39 +248,27 @@ def _safe_text(value: Any, maximum: int = 4096) -> str:
 
 
 def _preset_venues(configs: Path, presets: list[str]) -> dict[str, list[str]]:
-    """Report which venue each preset is bound to.
+    """Report which venues each preset can be run on.
 
-    A preset binds exactly one venue because ``strategy.instrument_id`` carries a
-    venue suffix, so the catalogue's exchange label cannot tell a user which of
-    an installed strategy's presets reaches which exchange. The rule matches the
-    one Live's deploy dialog uses: the market venues that the preset also
-    configures an account for.
+    The catalogue's exchange label cannot tell a user which of an installed
+    strategy's presets reaches which exchange, and a preset may now offer several
+    venues through its variants. The rule is shared with Live's deploy dialog so
+    the two plugins never disagree about what a package supports.
     """
+    from edgepilot_core.backtest.preset_schema import preset_venue_options
+
     result: dict[str, list[str]] = {}
     for name in presets:
         try:
             value = _read_json(configs / f"{name}.json")
-        except (OSError, ValueError):
+            options = preset_venue_options(value) if isinstance(value, dict) else []
+        except (OSError, ValueError, TypeError):
             # The server validates only the default preset's contents, so an
             # extra preset may be unreadable; that costs this preset its label,
             # never the whole strategy listing.
             continue
-        backtest = value.get("backtest") if isinstance(value, dict) else None
-        if not isinstance(backtest, dict):
-            continue
-        markets = backtest.get("markets")
-        venues = backtest.get("venues")
-        if not isinstance(markets, list) or not isinstance(venues, dict):
-            continue
-        configured = {str(key).upper() for key in venues}
-        used = {
-            str(market.get("venue", "")).upper()
-            for market in markets
-            if isinstance(market, dict) and market.get("venue")
-        }
-        selectable = sorted(used & configured)
-        if selectable:
-            result[name] = selectable
+        if options:
+            result[name] = options
     return result
 
 
@@ -359,6 +347,22 @@ def _run_directories() -> list[Path]:
     return sorted((path for path in root.iterdir() if path.is_dir() and RUN_ID.fullmatch(path.name)), reverse=True)
 
 
+def _run_venue(record: dict[str, Any]) -> str:
+    """Name the venue a finished run was produced on.
+
+    One preset now offers several venues, so a preset name no longer identifies a run.
+    The venue is read back from the record rather than stored beside it, which keeps
+    runs written before venue selection existed readable on the same terms.
+    """
+    markets = record.get("markets")
+    first = markets[0] if isinstance(markets, list) and markets and isinstance(markets[0], dict) else {}
+    venue = str(first.get("venue") or "").strip().upper()
+    if venue:
+        return venue
+    instrument = str(first.get("instrument_id") or "")
+    return instrument.rpartition(".")[2].strip().upper()
+
+
 def _run_summary(path: Path) -> dict[str, Any]:
     record = _read_json(path / "run.json")
     if not isinstance(record, dict):
@@ -368,6 +372,7 @@ def _run_summary(path: Path) -> dict[str, Any]:
         "run_id": path.name,
         "strategy": strategy.get("name"),
         "preset": strategy.get("preset"),
+        "venue": _run_venue(record) or None,
         "period": record.get("period"),
         "metrics": record.get("metrics"),
         "provenance": record.get("provenance"),
@@ -419,6 +424,7 @@ def run_detail(run_id: str) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ValueError("run record must be an object")
     allowed = {key: record.get(key) for key in ("run_id", "mode", "strategy", "markets", "venues", "period", "metrics", "provenance")}
+    allowed["venue"] = _run_venue(record) or None
     timeseries: list[dict[str, Any]] = []
     timeseries_meta = {"original_points": 0, "returned_points": 0, "downsampled": False}
     timeseries_path = root / "timeseries.json"
@@ -500,7 +506,7 @@ def _backtest_process_error(output: str, returncode: int) -> str:
     return f"backtest worker exited with code {returncode}: {detail}"
 
 
-def _backtest_result(output: str, *, strategy: str, version: str, preset: str, days: int) -> dict[str, Any]:
+def _backtest_result(output: str, *, strategy: str, version: str, preset: str, days: int, venue: str = "") -> dict[str, Any]:
     output = _strip_ansi(output)
     decoder = json.JSONDecoder()
     result: dict[str, Any] | None = None
@@ -523,6 +529,7 @@ def _backtest_result(output: str, *, strategy: str, version: str, preset: str, d
         or result.get("strategy") != strategy
         or result.get("version") != version
         or result.get("preset") != preset
+        or (venue and result.get("venue") != venue)
         or result.get("days") != days
         or not (state_root() / "runs" / run_id / "run.json").is_file()
     ):
@@ -548,6 +555,8 @@ def _run_backtest_process(
     preset: str,
     days: int,
     progress: Callable[[dict[str, Any]], None] | None = None,
+    *,
+    venue: str = "",
 ) -> dict[str, Any]:
     """Run Nautilus in a disposable process so its global logger cannot kill the Dashboard."""
     product_root = Path(__file__).resolve().parents[2]
@@ -560,20 +569,23 @@ def _run_backtest_process(
     # Streamed rather than captured in one call: filling a long period from a
     # venue that pages 100 bars at a time takes minutes, and the Dashboard has
     # nothing to show until the child exits otherwise.
+    arguments = [
+        str(active_runtime_python()),
+        "-m",
+        "edgepilot_research.cli",
+        "backtest",
+        strategy,
+        "--version",
+        version,
+        "--preset",
+        preset,
+        "--days",
+        str(days),
+    ]
+    if venue:
+        arguments += ["--venue", venue]
     with subprocess.Popen(
-        [
-            str(active_runtime_python()),
-            "-m",
-            "edgepilot_research.cli",
-            "backtest",
-            strategy,
-            "--version",
-            version,
-            "--preset",
-            preset,
-            "--days",
-            str(days),
-        ],
+        arguments,
         cwd=state_root(),
         env=env,
         stdout=subprocess.PIPE,
@@ -598,13 +610,14 @@ def _run_backtest_process(
         strategy=strategy,
         version=version,
         preset=preset,
+        venue=venue,
         days=days,
     )
 
 
 def start_backtest(payload: dict[str, Any]) -> str:
-    if set(payload) not in ({"strategy", "version", "preset", "days"}, {"strategy", "version", "preset", "days", "confirm_runtime"}):
-        raise ValueError("backtest accepts only strategy, version, preset, days, and optional confirm_runtime")
+    if set(payload) - {"confirm_runtime", "venue"} != {"strategy", "version", "preset", "days"}:
+        raise ValueError("backtest accepts only strategy, version, preset, days, and optional venue and confirm_runtime")
     slug_value = payload.get("strategy")
     version_value = payload.get("version")
     preset_value = payload.get("preset")
@@ -616,6 +629,13 @@ def start_backtest(payload: dict[str, Any]) -> str:
     installed = _installed(backtest_slug)
     if backtest_version != installed["version"] or backtest_preset not in installed["presets"]:
         raise ValueError("installed strategy version or preset does not match")
+    venue_value = payload.get("venue", "")
+    if not isinstance(venue_value, str):
+        raise ValueError("backtest fields must be strings")
+    backtest_venue: str = venue_value.strip().upper()
+    supported = installed.get("preset_venues", {}).get(backtest_preset, [])
+    if backtest_venue and backtest_venue not in supported:
+        raise ValueError(f"preset {backtest_preset!r} does not support venue {backtest_venue}; available: {supported}")
     days_value = payload.get("days")
     if type(days_value) is not int or days_value not in {90, 365}:
         raise ValueError("days must be 90 or 365")
@@ -632,7 +652,7 @@ def start_backtest(payload: dict[str, Any]) -> str:
         JOBS[job_id] = {"job_id": job_id, "status": "queued", "stage": "preparing", "message": "准备运行环境",
                         "downloaded_bytes": 0, "total_bytes": None, "percent": None,
                         "strategy": backtest_slug, "version": backtest_version, "preset": backtest_preset,
-                        "days": backtest_days, "created_at": now, "updated_at": now}
+                        "venue": backtest_venue, "days": backtest_days, "created_at": now, "updated_at": now}
 
     def worker() -> None:
         with JOBS_LOCK:
@@ -671,6 +691,7 @@ def start_backtest(payload: dict[str, Any]) -> str:
                 backtest_preset,
                 backtest_days,
                 data_progress,
+                venue=backtest_venue,
             )
             update = {"status": "succeeded", "stage": "complete", "message": "回测完成", "run_id": result["run_id"]}
         except Exception as error:  # job must always reach a terminal state
@@ -719,8 +740,16 @@ def _remote_error(handler: BaseHTTPRequestHandler, error: urllib.error.HTTPError
     if error.code == 429:
         raw = error.headers.get("Retry-After", "") if error.headers else ""
         retry_after = int(raw) if raw.isdigit() and 0 < int(raw) <= 3600 else None
-        details = {"retry_after": retry_after} if retry_after is not None else {}
-        _error(handler, "REMOTE_RATE_LIMITED", "Research Marketplace is rate limited", 503, details)
+        payload: dict[str, Any] = {
+            "code": "REMOTE_RATE_LIMITED",
+            "message": "Research Marketplace is rate limited",
+            "retryable": True,
+        }
+        headers = None
+        if retry_after is not None:
+            payload["retry_after"] = retry_after
+            headers = {"Retry-After": str(retry_after)}
+        _json_response(handler, {"error": payload}, 429, headers)
     else:
         _error(handler, "REMOTE_HTTP_ERROR", f"Research Marketplace returned HTTP {error.code}", 502, {"status": error.code})
 
@@ -895,6 +924,7 @@ class Handler(BaseHTTPRequestHandler):
                     locale=_locale(query.get("locale", ["en"])[0]),
                     limit=int(query.get("limit", ["100"])[0]),
                     venue=query.get("venue", [""])[0],
+                    page=int(query.get("page", ["1"])[0]),
                 ))
             match = re.fullmatch(r"/api/marketplace/strategies/([^/]+)/versions", parsed_path)
             if match:

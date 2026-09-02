@@ -46,6 +46,22 @@ stamp through. Getting this wrong would place the whole series one interval
 early and surface as a misleading "data missing" error rather than a timestamp
 fault, so a provider for a new venue must establish this before it ships.
 
+### DigiFinex Swap
+
+| | |
+|---|---|
+| Provider | DigiFinex Swap perpetual public market data |
+| Endpoint | `/public/instrument` and `/public/candles_history`, via NautilusTrader's DigiFinex HTTP client |
+| Authentication | None. Research passes no API key or secret and never initializes an execution client |
+| Preset requirement | A DigiFinex Swap perpetual instrument and a time-aggregated `-LAST-EXTERNAL` bar type; no venue credentials or extra settings |
+| Page size | 100 candles per request (the native client caps and advances ascending pages) |
+| Timestamp | The native parser preserves DigiFinex's millisecond candle timestamp as the canonical completed-bar timestamp |
+| Endpoint environment | Always the production `https://openapi.digifinex.com/swap/v2` host; the VPN-only DigiFinex Test host is never selected by Research |
+
+The Live catalog downloader applies the same LIVE default when a DigiFinex
+environment is omitted. Explicit `TEST` remains available only for controlled
+demo/test execution or an explicitly requested test download.
+
 ## Local retention and redistribution
 
 Downloaded bars are written to the Nautilus Parquet catalog under the Research
