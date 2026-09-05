@@ -1,10 +1,1 @@
-{
-  "name": "edgepilot-research",
-  "version": "0.13.3",
-  "description": "Publicly installable proprietary software for market strategy research and reproducible backtesting without accounts or trading.",
-  "author": {
-    "name": "Rivendell Holdings Investment Limited",
-    "email": "agent_strategy@rivendell.capital"
-  },
-  "homepage": "https://www.rivendell.capital"
-}
+{"author":{"name":"Rivendell Holdings Investment Limited"},"description":"Lightweight router for the local EdgePilot Research Runtime Host.","mcpServers":"./.mcp.json","name":"edgepilot-research","skills":"./skills/","version":"1.2.0"}

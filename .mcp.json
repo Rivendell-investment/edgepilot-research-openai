@@ -1,20 +1,14 @@
 {
   "mcpServers": {
-    "edgepilot-research-0-13-3": {
+    "edgepilot-research": {
       "type": "stdio",
       "command": "node",
-      "args": [
-        "./.mcp-launcher.mjs",
-        "./src/edgepilot_research/local_mcp.py"
-      ],
+      "args": ["./resolver.mjs", "research"],
       "cwd": ".",
       "enabled": true,
-      "env_vars": [
-        "PATH",
-        "APPDATA"
-      ],
-      "startup_timeout_sec": 10,
-      "tool_timeout_sec": 30
+      "env_vars": [],
+      "startup_timeout_sec": 180,
+      "tool_timeout_sec": 120
     }
   }
 }
