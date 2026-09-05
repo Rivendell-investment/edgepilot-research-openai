@@ -49,12 +49,21 @@ not force the questionnaire.
    the stable error and stop; offer repair without silently running it.
 2. Only after `state=ready` and `connection_ready=true`, call
    `edgepilot_dashboard_open` once and return its loopback URL.
-3. Ask the seven canonical preferences one at a time, in order: `profit_style`,
+3. Apply the **one-question turn boundary**. The internal field order is `profit_style`,
    `holding_period`, `pain_point`, `max_drawdown_pct`, `trading_mode`, `allocation_band`,
-   `universe`. Use only values accepted by the recommendation tool. Retain answers already
-   supplied by the user and ask only the next missing preference.
-4. Summarize all seven values in the user's language and obtain one explicit confirmation.
-5. Call `edgepilot_strategy_recommend` once with `questionnaire_version="2.0"`, the seven
+   `universe`. Ask only the first unanswered field, with only that field's choices, and end
+   the assistant turn immediately. Never display the complete questionnaire, a numbered
+   checklist, future questions, future choices or a request for multiple answers. Do not
+   preview what comes next.
+4. On the user's next message, retain every valid supplied answer and ask only the next
+   unanswered field, then end the turn immediately again. If the current answer is invalid
+   or ambiguous, clarify only the same field and end the turn; do not advance or expose any
+   later field. A message that already contains valid answers may fill them silently, but
+   the response still asks at most one unanswered field.
+5. After the last answer, use a separate assistant turn to summarize the selected values
+   and ask only for explicit confirmation. Do not combine that confirmation request with
+   another question and do not call recommendation before confirmation.
+6. Call `edgepilot_strategy_recommend` once with `questionnaire_version="2.0"`, the seven
    confirmed values and matching locale. Present exactly best fit, relatively steadier and
    more aggressive while preserving versions, evidence, trade-offs and warnings.
 
