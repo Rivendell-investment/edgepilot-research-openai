@@ -36,6 +36,31 @@ tool with the structured questionnaire; it delegates to the Host operation
 `catalog.strategy.recommend`. For “open Research”, call `edgepilot_dashboard_open` and
 return its loopback URL; never start the Dashboard directly.
 
+## First-use onboarding
+
+Run this flow only when the user selects a setup/recommendation starter prompt or explicitly
+asks for onboarding. Reply in the user's current language (`en`, `ko`, `zh-CN` or `zh-TW`).
+Ordinary catalog, Dashboard, data or backtest requests go directly to that outcome and do
+not force the questionnaire.
+
+1. Call `edgepilot_runtime_status`. If it is `not_installed` or `stopped`, tell the user
+   once that the anonymous Research Runtime will be downloaded or started, then call
+   `edgepilot_runtime_start` exactly once. Never duplicate a slow start. On an error, report
+   the stable error and stop; offer repair without silently running it.
+2. Only after `state=ready` and `connection_ready=true`, call
+   `edgepilot_dashboard_open` once and return its loopback URL.
+3. Ask the seven canonical preferences one at a time, in order: `profit_style`,
+   `holding_period`, `pain_point`, `max_drawdown_pct`, `trading_mode`, `allocation_band`,
+   `universe`. Use only values accepted by the recommendation tool. Retain answers already
+   supplied by the user and ask only the next missing preference.
+4. Summarize all seven values in the user's language and obtain one explicit confirmation.
+5. Call `edgepilot_strategy_recommend` once with `questionnaire_version="2.0"`, the seven
+   confirmed values and matching locale. Present exactly best fit, relatively steadier and
+   more aggressive while preserving versions, evidence, trade-offs and warnings.
+
+Do not install a recommended strategy until the user selects it. This flow remains anonymous
+and never introduces an account, credential, paper, demo, live or order capability.
+
 This Research surface never has account, credential, paper, exchange-demo, live execution
 or order operations. If a requested operation is absent, explain the boundary; never route
 through the Live profile or ask for a trading credential.
