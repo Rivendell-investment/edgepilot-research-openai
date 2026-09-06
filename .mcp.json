@@ -1,14 +1,1 @@
-{
-  "mcpServers": {
-    "edgepilot-research": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["./resolver.mjs", "research"],
-      "cwd": ".",
-      "enabled": true,
-      "env_vars": [],
-      "startup_timeout_sec": 180,
-      "tool_timeout_sec": 120
-    }
-  }
-}
+{"mcpServers":{"edgepilot-research":{"args":["./resolver.mjs","research"],"command":"node","cwd":".","enabled":true,"env":{"EDGEPILOT_ENV":"production"},"env_vars":[],"startup_timeout_sec":180,"tool_timeout_sec":120,"type":"stdio"}}}
