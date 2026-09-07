@@ -7,7 +7,7 @@ description: Route anonymous public strategy discovery and reproducible historic
 
 The Node Ready Bridge always exposes `edgepilot_runtime_status`,
 `edgepilot_runtime_start`, `edgepilot_runtime_update` and `edgepilot_runtime_repair`, even
-before Runtime exists. When Runtime is ready, use the five Host meta tools:
+before Runtime exists. The bridge automatically prepares the release-bound Runtime before first business use; never treat an older compatible Runtime as ready. When Runtime is ready, use the five Host meta tools:
 
 1. `edgepilot_connection_list`
 2. `edgepilot_tool_search`
@@ -43,7 +43,7 @@ asks for onboarding. Reply in the user's current language (`en`, `ko`, `zh-CN` o
 Ordinary catalog, Dashboard, data or backtest requests go directly to that outcome and do
 not force the questionnaire.
 
-1. Call `edgepilot_runtime_status`. If it is `not_installed` or `stopped`, tell the user
+1. Call `edgepilot_runtime_status`. If it is `not_installed`, `stopped` or `update_required`, tell the user
    once that the anonymous Research Runtime will be downloaded or started, then call
    `edgepilot_runtime_start` exactly once. Never duplicate a slow start. On an error, report
    the stable error and stop; offer repair without silently running it. If status is
