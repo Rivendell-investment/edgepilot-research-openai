@@ -84,3 +84,10 @@ The local MCP route and bearer are created in an owner-private staged copy by th
 Host. If the connection is unavailable, report that the Runtime/Host must be started
 or repaired; do not search for Python, install packages, scan ports or call Marketplace MCP
 as an internal substitute.
+
+## Upgrade recovery
+
+The plugin ships its fixed-release lifecycle entry. Upgrades are forward-only; do not invoke
+rollback or search for system Python. Inspect a pending lifecycle operation instead of starting
+a duplicate. Active backtests or writes must complete or be explicitly cancelled before upgrade.
+Research never uses Live task management or reads Live state.
