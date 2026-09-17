@@ -33,7 +33,11 @@ job is still queued or running.
 
 For chat recommendation, call the read-only `edgepilot_strategy_recommend` convenience
 tool with the structured questionnaire; it delegates to the Host operation
-`catalog.strategy.recommend`. For “open Research”, call `edgepilot_dashboard_open` and
+`catalog.strategy.recommend`. Use `edgepilot_strategy_search` directly for identity/keyword
+lookup and explicit hard filters, preserving locale and every supported constraint. Route
+subjective fit or mixed hard-filter/preference requests through Recommendation V3; keep V2
+for confirmed seven-question onboarding. Disclose unsupported constraints and preserve the
+owner order. For “open Research”, call `edgepilot_dashboard_open` and
 return its loopback URL; never start the Dashboard directly.
 
 ## First-use onboarding
