@@ -1,6 +1,6 @@
 ---
 name: edgepilot-research
-description: Route anonymous public strategy discovery and reproducible historical backtests through the local EdgePilot Research Runtime. It has no accounts, credentials, paper, demo, live trading, or order execution.
+description: Route anonymous public strategy discovery and reproducible historical backtests through the local EdgePilot Research Runtime. It has no accounts, credentials, demo, live trading, or order execution.
 ---
 
 # EdgePilot Research router
@@ -108,9 +108,9 @@ not force the questionnaire.
    more aggressive while preserving versions, evidence, trade-offs and warnings.
 
 Do not install a recommended strategy until the user selects it. This flow remains anonymous
-and never introduces an account, credential, paper, demo, live or order capability.
+and never introduces an account, credential, demo, live or order capability.
 
-This Research surface never has account, credential, paper, exchange-demo, live execution
+This Research surface never has account, credential, exchange-demo, live execution
 or order operations. If a requested operation is absent, explain the boundary; never route
 through the Live profile or ask for a trading credential.
 
@@ -118,6 +118,13 @@ The local MCP route and bearer are created in an owner-private staged copy by th
 Host. If the connection is unavailable, report that the Runtime/Host must be started
 or repaired; do not search for Python, install packages, scan ports or call Marketplace MCP
 as an internal substitute.
+
+## Runtime failure diagnosis
+
+When install, update or startup fails, or Host tools are unavailable, call
+`edgepilot_runtime_diagnose` for read-only, redacted lifecycle and Host log evidence.
+Explain the failing step and separate the evidence from your inference; do not start,
+update or repair anything unless the user asks.
 
 ## Upgrade recovery
 
