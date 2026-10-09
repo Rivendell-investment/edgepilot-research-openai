@@ -45,7 +45,20 @@ owner order. If the user asks for an exact number of recommendations, send that 
 `limit` (for example, `limit=1`, `limit=2` or `limit=3`); do not let the search tool default
 to ten results for a counted request. Use a larger explicit limit only when the user asks for
 options or multiple candidates. For “open Research”, call `edgepilot_dashboard_open` and
-return its loopback URL; never start the Dashboard directly.
+present its URL as a link (Dashboard links below); never start the Dashboard directly.
+
+## Dashboard links
+
+Show a Dashboard URL as one Markdown link with a short label in the user's language, never as
+the raw address: for example `[打开 EdgePilot 控制台](<url>)`, or, when a strategy target was
+opened, `[在 EdgePilot 中查看 <strategy name> <version>](<url>)`.
+
+- A message "Dashboard 已准备好，请点击打开：<url>" is posted by the EdgePilot card's view
+  button and already carries a fresh link to that strategy: reply only with that exact URL as
+  the link. Do not call `edgepilot_dashboard_open` for it; a new link without the card's target
+  would open the Dashboard without the strategy.
+- A link signs the browser in once within 10 minutes. When the user asks to open it again
+  later, call `edgepilot_dashboard_open` again with the same `target` as before.
 
 ## First-use onboarding
 
@@ -62,20 +75,14 @@ not force the questionnaire.
    Wait for the original call's final result; yielded/running is not completed. If the
    script reports `runtime_operation_pending`, wait on that call or query status with
    bounded backoff, without parallel open calls or duplicate installations.
-   When `state=awaiting_confirmation`, show `switch.processes` and `switch.jobs` and ask
-   once: “暂不切换” (`defer`) or “停止旧版本并继续” (`stop_and_continue`), translated into
-   the user's language. Explain that stopping trading programs does not guarantee order
-   cancellation or position closure. Submit the chosen action to the same lifecycle tool
-   with the returned `operation_id` and `snapshot_digest`; never invent or reuse a changed
-   snapshot. This choice authorizes only the listed process stop, not an orders/positions
-   review. A refreshed snapshot requires a fresh choice. On `deferred`, end this target
-   startup request and leave the old environment alone; do not open old onboarding as
-   target success. Report other failures and their script-provided recovery action.
+   Research switches never pause work: running backtests finish on the previous version
+   and the new Host shows their results. Report failures and their script-provided
+   recovery action.
    For `stale_session`, reload the plugin session rather than attempting a downgrade.
 2. For this Dashboard-and-onboarding request, all successful paths (already running,
    stopped target started, first installation, upgrade or repair) continue identically.
    Only after `state=ready` and `connection_ready=true`, call
-   `edgepilot_dashboard_open` once and return its loopback URL. Then call
+   `edgepilot_dashboard_open` once and present its URL as a link (Dashboard links). Then call
    `edgepilot_onboarding_open` once with the current locale. On success, hand control to
    that interactive card and end the turn. A brief instruction to continue in the card is
    enough; do not repeat questionnaire choices in chat or call another question/selection
