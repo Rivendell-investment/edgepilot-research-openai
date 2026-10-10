@@ -74,11 +74,17 @@ not force the questionnaire.
    historical lifecycle phases and do not assemble alternative shell recovery commands.
    Wait for the original call's final result; yielded/running is not completed. If the
    script reports `runtime_operation_pending`, wait on that call or query status with
-   bounded backoff, without parallel open calls or duplicate installations.
+   bounded backoff, without parallel open calls or duplicate installations. Status text
+   includes the phase, download progress, last error and recent log lines.
    Research switches never pause work: running backtests finish on the previous version
    and the new Host shows their results. Report failures and their script-provided
    recovery action.
    For `stale_session`, reload the plugin session rather than attempting a downgrade.
+   For `host_start_timeout`, tell the user that reloading or restarting Cursor does not
+   restart the Host. The Host is a separate sign-in task. Do not invent a shell command
+   to end it, and do not ask the user to end it in Task Scheduler. Call
+   `edgepilot_runtime_start` again: that start ends a Host task that is still occupying
+   the slot, then starts the current Runtime. If the same timeout returns, report it.
 2. For this Dashboard-and-onboarding request, all successful paths (already running,
    stopped target started, first installation, upgrade or repair) continue identically.
    Only after `state=ready` and `connection_ready=true`, call
@@ -130,6 +136,8 @@ as an internal substitute.
 
 When install, update or startup fails, or Host tools are unavailable, call
 `edgepilot_runtime_diagnose` for read-only, redacted lifecycle and Host log evidence.
+Its text includes the current phase, download progress, last error and recent log lines.
+While installation is still pending, `edgepilot_runtime_status` text has the same progress.
 Explain the failing step and separate the evidence from your inference; do not start,
 update or repair anything unless the user asks.
 
