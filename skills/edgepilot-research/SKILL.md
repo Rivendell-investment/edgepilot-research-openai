@@ -62,7 +62,8 @@ opened, `[在 EdgePilot 中查看 <strategy name> <version>](<url>)`.
 
 ## First-use onboarding
 
-Run this flow only when the user selects an interactive-onboarding starter prompt or
+Run this flow only when the `edgepilot-research-setup` skill runs (plugin setup after
+installation), when the user selects an interactive-onboarding starter prompt or
 explicitly asks to open/start the questionnaire or onboarding. A plain request to find or
 recommend a strategy is not onboarding. Reply in the user's current language (`en`, `ko`, `zh-CN` or `zh-TW`).
 Ordinary catalog, Dashboard, data or backtest requests go directly to that outcome and do
@@ -75,7 +76,10 @@ not force the questionnaire.
    Wait for the original call's final result; yielded/running is not completed. If the
    script reports `runtime_operation_pending`, wait on that call or query status with
    bounded backoff, without parallel open calls or duplicate installations. Status text
-   includes the phase, download progress, last error and recent log lines.
+   includes the current state, required action, phase, download progress, last error and recent log lines.
+   When `state=update_required`, call `edgepilot_runtime_start`; that start upgrades to the
+   plugin-bound release. `previous_lifecycle`, including an earlier `host_start_timeout`, belongs
+   to the previous release. Do not diagnose or restart that old Host before this start.
    Research switches never pause work: running backtests finish on the previous version
    and the new Host shows their results. Report failures and their script-provided
    recovery action.
